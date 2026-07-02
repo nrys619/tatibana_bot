@@ -1,0 +1,53 @@
+# config.yaml にコピーして使用 (config.yaml は .gitignore 済み)
+
+api:
+  # demo: デモ環境 / prod: 本番環境
+  env: demo
+  # e支店APIのバージョン文字列。立花証券の最新API仕様書で確認して合わせること
+  version: e_api_v4r7
+  base_urls:
+    demo: https://demo-kabuka.e-shiten.jp
+    prod: https://kabuka.e-shiten.jp
+  timeout_sec: 10
+
+paths:
+  data_dir: data
+  models_dir: models
+  logs_dir: logs
+  watchlist: data/watchlist.json
+
+universe:
+  # スクリーニング対象銘柄 (東証コード)。実運用では TOPIX500 等に拡張する
+  codes: ["7203", "6758", "9984", "8306", "6501", "7974", "6098", "8035", "4063", "9432"]
+
+screening:
+  top_n: 5                 # 監視リストに載せる銘柄数
+  min_turnover_jpy: 1.0e9  # 最低売買代金 (流動性フィルタ)
+  label_range_pct: 3.0     # 「翌日この値幅%以上動いたらデイトレ向き」のラベル閾値
+  history_days: 750
+
+disclosure:
+  model: claude-opus-4-8    # コスト重視なら claude-haiku-4-5 に変更可
+  max_docs_per_run: 50
+  min_impact_for_watchlist: 3
+
+signals:
+  imbalance_entry: 0.3      # 板の買い/売り不均衡の閾値
+  tape_ratio_entry: 0.6     # 歩み値の買い約定比率の閾値
+  max_spread_bps: 20        # スプレッドがこれ以上開いていたらエントリーしない
+  target_pct: 0.8           # 利確幅 (%)
+  stop_pct: 0.4             # 損切り幅 (%)
+  max_hold_sec: 1800        # 最大保有時間 (秒)
+
+risk:
+  equity_jpy: 1000000       # 運用資金
+  risk_per_trade: 0.005     # 1トレードで許容する損失 (資金比)
+  max_position_value: 300000
+  daily_loss_limit: 0.02    # 日次損失がこの比率に達したら当日停止
+  max_consecutive_losses: 4
+  regime_index: "^N225"     # 地合い判定に使う指数
+
+engine:
+  mode: paper               # paper: 発注せずログのみ / live: 実発注
+  poll_interval_sec: 1.0
+  record_snapshots: true    # 板スナップショットを保存 (③のML学習データになる)
