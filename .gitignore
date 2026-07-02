@@ -7,9 +7,9 @@ secrets/
 *_authid.txt
 
 # data artifacts
-data/
-models/
-logs/
+/data/
+/models/
+/logs/
 *.parquet
 *.sqlite3
 
