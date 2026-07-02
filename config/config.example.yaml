@@ -25,6 +25,14 @@ paths:
 universe:
   # スクリーニング対象銘柄 (東証コード)。実運用では TOPIX500 等に拡張する
   codes: ["7203", "6758", "9984", "8306", "6501", "7974", "6098", "8035", "4063", "9432"]
+  # 松井証券の公開ランキングから銘柄候補を自動追加する (夜間バッチ)
+  matsui:
+    enabled: true
+    # 使うランキング: day_trading_morning/afternoon, tick, volume, volume_surge,
+    #                trading_value, trading_value_surge, rise, fall, interval_rise, interval_fall
+    rankings: ["day_trading_afternoon", "tick", "volume_surge", "trading_value"]
+    market: 0     # 0=全体 1=プライム 2=スタンダード 3=グロース
+    top_k: 20     # 各ランキングの上位何銘柄を候補に入れるか
 
 screening:
   top_n: 5                 # 監視リストに載せる銘柄数

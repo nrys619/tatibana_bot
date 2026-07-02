@@ -13,6 +13,7 @@ from pathlib import Path
 
 from tatibana_bot.config import load_config
 from tatibana_bot.data.daily import update_universe
+from tatibana_bot.data.matsui import candidate_codes
 from tatibana_bot.screening.rank import rank_universe
 from tatibana_bot.screening.train import build_dataset, train_model
 from tatibana_bot.screening.watchlist import save_watchlist
@@ -30,22 +31,37 @@ def main() -> None:
     cfg = load_config(args.config)
     model_path = Path(cfg.paths.models_dir) / "screener.txt"
 
-    # 1. 日足更新 (地合い判定用の指数も含める)
+    # 1. 銘柄候補を集める (固定リスト + 松井証券の公開ランキング)
     codes = list(cfg.universe.codes)
+    matsui_cfg = cfg.universe.get("matsui")
+    if matsui_cfg is not None and matsui_cfg.get("enabled", False):
+        try:
+            counts = candidate_codes(
+                list(matsui_cfg.get("rankings", [])),
+                market=matsui_cfg.get("market", 0),
+                top_k=matsui_cfg.get("top_k", 20),
+            )
+            added = [c for c in counts if c not in codes]
+            codes += added
+            logger.info("matsui rankings: %d candidates added %s", len(added), added)
+        except Exception:
+            logger.warning("matsui rankings unavailable — using static universe", exc_info=True)
+
+    # 2. 日足更新 (地合い判定用の指数も含める)
     bars = update_universe(codes + [cfg.risk.regime_index], cfg.paths.data_dir,
                            days=cfg.screening.history_days)
     index_df = bars.pop(cfg.risk.regime_index, None)
     if index_df is None:
         logger.warning("failed to fetch regime index %s", cfg.risk.regime_index)
 
-    # 2. 学習 (--train 時、またはモデル未作成時)
+    # 3. 学習 (--train 時、またはモデル未作成時)
     if args.train or not model_path.exists():
         table = build_dataset(bars, cfg.screening.label_range_pct,
                               cfg.screening.min_turnover_jpy)
         metrics = train_model(table, model_path)
         logger.info("training metrics: %s", metrics)
 
-    # 3. ランキング -> 監視リスト保存
+    # 4. ランキング -> 監視リスト保存
     items = rank_universe(bars, model_path, top_n=cfg.screening.top_n,
                           min_turnover_jpy=cfg.screening.min_turnover_jpy)
     save_watchlist(items, cfg.paths.watchlist)
