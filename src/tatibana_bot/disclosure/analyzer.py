@@ -98,24 +98,31 @@ class DisclosureAnalyzer:
         ]
         return self._parse(content)
 
+    # Fable 5 等の安全装置に解析を断られた場合の控えモデル
+    FALLBACK_MODEL = "claude-opus-4-8"
+
     def _parse(self, content) -> DisclosureAnalysis | None:
         import anthropic
 
-        try:
-            response = self._client.messages.parse(
-                model=self._model,
-                max_tokens=2048,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": content}],
-                output_format=DisclosureAnalysis,
-            )
-        except anthropic.APIStatusError:
-            logger.error("Claude API error during disclosure analysis", exc_info=True)
-            return None
-        if response.stop_reason == "refusal":
-            logger.warning("analysis refused: stop_details=%s", response.stop_details)
-            return None
-        return response.parsed_output
+        # 指定モデルが refusal を返したら控えモデルで一度だけ再解析する
+        for model in dict.fromkeys([self._model, self.FALLBACK_MODEL]):
+            try:
+                response = self._client.messages.parse(
+                    model=model,
+                    max_tokens=2048,
+                    system=SYSTEM_PROMPT,
+                    messages=[{"role": "user", "content": content}],
+                    output_format=DisclosureAnalysis,
+                )
+            except anthropic.APIStatusError:
+                logger.error("Claude API error during disclosure analysis", exc_info=True)
+                return None
+            if response.stop_reason == "refusal":
+                logger.warning("analysis refused on %s: stop_details=%s",
+                               model, response.stop_details)
+                continue
+            return response.parsed_output
+        return None
 
     def analyze_all(
         self, disclosures: list[Disclosure], deep_dive_impact: int = 4

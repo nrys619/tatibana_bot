@@ -41,7 +41,7 @@ screening:
   history_days: 750
 
 disclosure:
-  model: claude-opus-4-8    # コスト重視なら claude-haiku-4-5 に変更可
+  model: claude-opus-4-8    # 最高性能なら claude-fable-5 (2倍の料金)、コスト重視なら claude-haiku-4-5
   max_docs_per_run: 50
   min_impact_for_watchlist: 3
 
