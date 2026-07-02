@@ -24,8 +24,20 @@ cp config/config.example.yaml config/config.yaml  # パラメータ調整
 
 必要な認証情報 (`.env` または環境変数):
 
-- `TACHIBANA_USER_ID` / `TACHIBANA_PASSWORD` — 立花証券e支店 (まずデモ口座を推奨)
+- **立花証券e支店 — 公開鍵認証 (v4r9〜, 推奨)**
+  会員ページで発行した `e_api_authid.txt` (認証ID) と `e_api_private_key.pem` (秘密鍵) を
+  リポジトリ外か `secrets/` (gitignore済み) に置き、
+  `TACHIBANA_AUTH_ID_FILE` / `TACHIBANA_PRIVATE_KEY_FILE` にパスを設定。
+  公開鍵 (`e_api_public_key.pem/.der`) は立花側に登録するもので、ボットの実行には不要。
+  **秘密鍵と認証IDは絶対にgitにコミットしないこと** (`.gitignore` で `*.pem` `*.der`
+  `*_authid.txt` `secrets/` をブロック済み)。デモと本番で鍵セットは別物。
+- 旧パスワード認証 (v4r8以前) を使う場合は `config.yaml` の `api.auth_method: password` と
+  `TACHIBANA_USER_ID` / `TACHIBANA_PASSWORD`
 - `ANTHROPIC_API_KEY` — 開示解析(②)に使用
+
+公開鍵認証のログインは、レスポンスの仮想URLが口座登録済みの公開鍵でRSA暗号化
+(OAEP/SHA-256 + Base64) されて返るため、手元の秘密鍵で復号する方式です
+(`api/crypto.py`、[公式Pythonサンプル](https://github.com/e-shiten-jp)準拠)。
 
 ## 1日の運用フロー
 

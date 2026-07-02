@@ -1,6 +1,10 @@
 # secrets / local config
 .env
 config/config.yaml
+secrets/
+*.pem
+*.der
+*_authid.txt
 
 # data artifacts
 data/

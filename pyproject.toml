@@ -5,6 +5,7 @@ description = "AI-assisted day trading bot for Japanese stocks using Tachibana S
 requires-python = ">=3.10"
 dependencies = [
     "requests>=2.31",
+    "cryptography>=42.0",
     "pandas>=2.0",
     "numpy>=1.24",
     "pyyaml>=6.0",

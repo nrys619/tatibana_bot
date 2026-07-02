@@ -11,8 +11,9 @@ import argparse
 import logging
 from pathlib import Path
 
-from tatibana_bot.api import MarketDataClient, OrderGateway, TachibanaSession
-from tatibana_bot.config import env, load_config
+from tatibana_bot.api import MarketDataClient, OrderGateway
+from tatibana_bot.api.factory import create_session
+from tatibana_bot.config import load_config
 from tatibana_bot.data.daily import load_universe
 from tatibana_bot.data.store import SnapshotRecorder, TradeLog
 from tatibana_bot.engine.engine import LiveEngine
@@ -69,14 +70,7 @@ def main() -> None:
         ml_scorer=scorer,
     )
 
-    base_url = cfg.api.base_urls.get(cfg.api.env)
-    session = TachibanaSession(
-        base_url=base_url,
-        version=cfg.api.version,
-        user_id=env("TACHIBANA_USER_ID"),
-        password=env("TACHIBANA_PASSWORD"),
-        timeout_sec=cfg.api.timeout_sec,
-    )
+    session = create_session(cfg)
 
     with session:
         executor = Executor(mode, OrderGateway(session) if mode == "live" else None)

@@ -3,8 +3,14 @@
 api:
   # demo: デモ環境 / prod: 本番環境
   env: demo
+  # 認証方式:
+  #   pubkey   (v4r9〜, 推奨): 認証ID + RSA秘密鍵。環境変数で
+  #            TACHIBANA_AUTH_ID_FILE / TACHIBANA_PRIVATE_KEY_FILE を指定
+  #   password (v4r8以前): TACHIBANA_USER_ID / TACHIBANA_PASSWORD
+  # ※ デモと本番では認証ID・鍵ペアが別物。混用しないこと
+  auth_method: pubkey
   # e支店APIのバージョン文字列。立花証券の最新API仕様書で確認して合わせること
-  version: e_api_v4r7
+  version: e_api_v4r9
   base_urls:
     demo: https://demo-kabuka.e-shiten.jp
     prod: https://kabuka.e-shiten.jp
