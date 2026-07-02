@@ -40,6 +40,13 @@ class Config:
 
 
 def load_config(path: str | Path | None = None) -> Config:
+    # .env ファイルがあれば環境変数として読み込む (認証情報用)
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+    except ImportError:
+        pass
     if path is not None:
         candidates = [Path(path)]
     else:
