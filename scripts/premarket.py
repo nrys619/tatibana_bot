@@ -36,9 +36,14 @@ def main() -> None:
     watch_codes = {w.code for w in watchlist}
     universe = set(cfg.universe.codes)
 
-    disclosures = fetch_disclosures(target_day, limit=cfg.disclosure.max_docs_per_run)
+    # その日の開示は全件取ってから絞る (limitを小さくすると監視銘柄の開示を見逃す)
+    disclosures = fetch_disclosures(target_day, limit=3000)
     # ユニバース内の開示だけをLLMにかける (コスト管理)
     relevant = [d for d in disclosures if d.code in universe | watch_codes]
+    if len(relevant) > cfg.disclosure.max_docs_per_run:
+        logger.warning("%d relevant disclosures — analyzing only the first %d",
+                       len(relevant), cfg.disclosure.max_docs_per_run)
+        relevant = relevant[: cfg.disclosure.max_docs_per_run]
     if not relevant:
         logger.info("no relevant disclosures for %s", target_day)
         return
