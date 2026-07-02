@@ -28,7 +28,7 @@ universe:
 
 screening:
   top_n: 5                 # 監視リストに載せる銘柄数
-  min_turnover_jpy: 1.0e9  # 最低売買代金 (流動性フィルタ)
+  min_turnover_jpy: 1.0e+9  # 最低売買代金 (流動性フィルタ)
   label_range_pct: 3.0     # 「翌日この値幅%以上動いたらデイトレ向き」のラベル閾値
   history_days: 750
 
