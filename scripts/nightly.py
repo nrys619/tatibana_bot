@@ -14,6 +14,7 @@ from pathlib import Path
 from tatibana_bot.config import load_config
 from tatibana_bot.data.daily import update_universe
 from tatibana_bot.data.matsui import candidate_codes
+from tatibana_bot.risk.sizing import UNIT_SHARES
 from tatibana_bot.screening.rank import rank_universe
 from tatibana_bot.screening.train import build_dataset, train_model
 from tatibana_bot.screening.watchlist import save_watchlist
@@ -62,8 +63,11 @@ def main() -> None:
         logger.info("training metrics: %s", metrics)
 
     # 4. ランキング -> 監視リスト保存
+    # 予算フィルタ: 1単元(100株)が建玉上限に収まる銘柄だけを対象にする
+    max_price = cfg.risk.max_position_value / UNIT_SHARES
     items = rank_universe(bars, model_path, top_n=cfg.screening.top_n,
-                          min_turnover_jpy=cfg.screening.min_turnover_jpy)
+                          min_turnover_jpy=cfg.screening.min_turnover_jpy,
+                          max_price_jpy=max_price)
     save_watchlist(items, cfg.paths.watchlist)
     logger.info("watchlist saved to %s: %s", cfg.paths.watchlist, [w.code for w in items])
 

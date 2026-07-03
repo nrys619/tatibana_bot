@@ -18,6 +18,7 @@ def rank_universe(
     model_path: str | Path,
     top_n: int = 5,
     min_turnover_jpy: float = 1e9,
+    max_price_jpy: float | None = None,
 ) -> list[WatchItem]:
     """各銘柄の最新日の特徴量でスコアリングし、上位 top_n を返す."""
     import lightgbm as lgb
@@ -27,6 +28,9 @@ def rank_universe(
     for code, df in bars.items():
         feats = compute_features(df).iloc[-1]
         if feats[FEATURE_COLUMNS].isna().any():
+            continue
+        # 予算フィルタ: 1単元(100株)買うと建玉上限を超える値がさ株は除外
+        if max_price_jpy is not None and float(df["close"].iloc[-1]) > max_price_jpy:
             continue
         # 流動性フィルタ: 直近の売買代金が細い銘柄はデイトレ対象外
         if feats["turnover_jpy"] < min_turnover_jpy:
