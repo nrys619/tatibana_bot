@@ -171,23 +171,31 @@ class TachibanaSession:
 
     # ---- typed request helpers -------------------------------------
 
+    def _send_with_relogin(self, url_attr: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """仮想URLへの送信。セッション切断エラー時は一度だけ再ログインしてリトライする."""
+        url = getattr(self, url_attr)
+        if not url:
+            raise TachibanaApiError("not logged in")
+        try:
+            return self._send(url, payload)
+        except TachibanaApiError as e:
+            if "セッションが切断" not in str(e):
+                raise
+            logger.warning("session disconnected — re-login and retry (%s)", payload.get("sCLMID"))
+            self.login()
+            return self._send(getattr(self, url_attr), payload)
+
     def request(self, clmid: str, **params: Any) -> dict[str, Any]:
         """注文・照会系 (仮想URL request) への電文送信."""
-        if not self.url_request:
-            raise TachibanaApiError("not logged in")
-        return self._send(self.url_request, {"sCLMID": clmid, **params})
+        return self._send_with_relogin("url_request", {"sCLMID": clmid, **params})
 
     def price(self, clmid: str, **params: Any) -> dict[str, Any]:
         """時価情報系 (仮想URL price) への電文送信."""
-        if not self.url_price:
-            raise TachibanaApiError("not logged in")
-        return self._send(self.url_price, {"sCLMID": clmid, **params})
+        return self._send_with_relogin("url_price", {"sCLMID": clmid, **params})
 
     def master(self, clmid: str, **params: Any) -> dict[str, Any]:
         """マスタ情報系 (仮想URL master) への電文送信."""
-        if not self.url_master:
-            raise TachibanaApiError("not logged in")
-        return self._send(self.url_master, {"sCLMID": clmid, **params})
+        return self._send_with_relogin("url_master", {"sCLMID": clmid, **params})
 
     def __enter__(self) -> "TachibanaSession":
         self.login()
