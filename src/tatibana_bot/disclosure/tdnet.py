@@ -29,10 +29,10 @@ class Disclosure:
     url_xbrl: str = ""
 
 
-def fetch_disclosures(day: date | None = None, limit: int = 300) -> list[Disclosure]:
+def fetch_disclosures(day: date | None = None, limit: int = 300, timeout: int = 90) -> list[Disclosure]:
     """指定日 (デフォルト今日) の適時開示一覧を取得."""
     key = (day or date.today()).strftime("%Y%m%d")
-    resp = requests.get(TDNET_API.format(key=key), params={"limit": limit}, timeout=30)
+    resp = requests.get(TDNET_API.format(key=key), params={"limit": limit}, timeout=timeout)
     resp.raise_for_status()
     items = resp.json().get("items", [])
 

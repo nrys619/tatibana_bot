@@ -29,8 +29,14 @@ def main() -> None:
     args = parser.parse_args()
 
     cfg = load_config(args.config)
-    # 引け後〜夜に出た開示が翌日の材料になるため、デフォルトは前日分
-    target_day = date.fromisoformat(args.date) if args.date else date.today() - timedelta(days=1)
+    # 引け後〜夜に出た開示が翌日の材料になるため、デフォルトは前営業日分
+    # (月曜は金曜分を見る。祝日は考慮しない簡易版)
+    if args.date:
+        target_day = date.fromisoformat(args.date)
+    else:
+        target_day = date.today() - timedelta(days=1)
+        while target_day.weekday() >= 5:  # 5=土, 6=日
+            target_day -= timedelta(days=1)
 
     watchlist = load_watchlist(cfg.paths.watchlist)
     watch_codes = {w.code for w in watchlist}

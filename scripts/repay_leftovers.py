@@ -26,6 +26,24 @@ def main() -> None:
     with create_session(cfg) as session:
         gw = OrderGateway(session)
 
+        # 0. 未約定の注文を先に取消 (デモ環境が毎朝再セットするサンプル注文が
+        #    建玉を予約してしまい、返済が「建玉明細なし」で弾かれるため)
+        import time as _time
+        eigyou_day = _time.strftime("%Y%m%d")
+        for o in gw.list_orders().get("aOrderList", []) or []:
+            status = str(o.get("sOrderStatusCode", ""))
+            if status in ("10", "7", "12", "14"):  # 約定済み・取消済みはスキップ
+                continue
+            num = o.get("sOrderOrderNumber", "")
+            if not num:
+                continue
+            try:
+                gw.cancel_order(num, eigyou_day)
+                logger.info("cancelled stale order: %s %s", o.get("sOrderIssueCode"), num)
+            except TachibanaApiError:
+                logger.warning("failed to cancel order %s", num, exc_info=True)
+        _time.sleep(2)
+
         margins = [
             (r.get("sOrderIssueCode"), str(r.get("sOrderBaibaiKubun")),
              int(float(r.get("sOrderTategyokuSuryou", "0") or 0)))
