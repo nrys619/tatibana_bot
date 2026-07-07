@@ -42,6 +42,11 @@ class Variant:
     trailing_pct: float = 0.0       # ⑤トレーリング: ピークからこの%押したら決済 (0=無効)
     surge_ratio: float = 2.0        # 出来高急増の倍率
     absorption_ratio: float = 0.7   # 吸収判定: 反対板がこの割合未満に減ったら
+    confirm_ticks: int = 0          # A: 合図がこの秒数連続で点灯したら入る (0=即)
+    min_range_pct: float = 0.0      # B: 直近5分の値幅がこの%未満の銘柄は見送り
+    scratch_sec: float = 0.0        # C: この秒数たっても伸びない取引は±0撤退 (0=無効)
+    skip_open_min: int = 0          # D: 寄りからこの分数は見送り
+    loss_cooldown_sec: float = 0.0  # E: その銘柄で負けたらこの秒数出禁 (0=通常60s)
 
 
 @dataclass
@@ -91,8 +96,9 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]]) -> dict:
     trades: list[float] = []
     for code, rows in per_code.items():
         st = CodeState()
-        pos = None            # (side, entry_px, entry_t, stop, target)
+        pos = None
         cooldown_until = 0.0
+        streak_side, streak_n = None, 0
         for r in rows:
             t = _epoch(r["ts"])
             px = r.get("last_price")
@@ -117,6 +123,10 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]]) -> dict:
             if pos is not None:
                 side, epx, et, stop, target, peak = pos
                 exit_reason = None
+                if v.scratch_sec > 0 and t - et >= v.scratch_sec:
+                    move = (px - epx) / epx * 100 * (1 if side == "buy" else -1)
+                    if move < 0.05:  # 5分たってほぼ伸びていない
+                        exit_reason = "scratch"
                 if v.trailing_pct > 0:  # ⑤利確目標なし、ピークからの押しで決済
                     if side == "buy":
                         peak = max(peak, px)
@@ -145,7 +155,10 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]]) -> dict:
                     pnl = (fill - epx) * UNIT if side == "buy" else (epx - fill) * UNIT
                     trades.append(pnl)
                     pos = None
-                    cooldown_until = t + COOLDOWN_S
+                    cd = COOLDOWN_S
+                    if pnl < 0 and v.loss_cooldown_sec > 0:
+                        cd = v.loss_cooldown_sec
+                    cooldown_until = t + cd
                 continue
 
             # --- エントリー判定 ---
@@ -155,14 +168,30 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]]) -> dict:
                 hhmm = r["ts"][11:16]
                 if not ("09:00" <= hhmm < "10:00" or "14:30" <= hhmm < "15:00"):
                     continue
+            if v.skip_open_min > 0:
+                hhmmss = r["ts"][11:19]
+                if hhmmss < f"09:{v.skip_open_min:02d}:00":
+                    continue
+            if v.min_range_pct > 0:
+                rng = (max(win_prices) - min(win_prices)) / px * 100
+                if rng < v.min_range_pct:
+                    continue
             if r.get("spread_bps", 99) > v.max_spread_bps:
                 continue
             imb, br, micro = r.get("imbalance", 0), r.get("buy_ratio", 0.5), r.get("microprice_dev", 0)
             long_ok = imb >= v.imbalance and br >= v.tape_ratio and micro > 0
             short_ok = imb <= -v.imbalance and br <= 1 - v.tape_ratio and micro < 0
             if not long_ok and not short_ok:
+                streak_side, streak_n = None, 0
                 continue
             side = "buy" if long_ok else "sell"
+            if v.confirm_ticks > 0:
+                if side == streak_side:
+                    streak_n += 1
+                else:
+                    streak_side, streak_n = side, 1
+                if streak_n < v.confirm_ticks:
+                    continue
 
             if v.trend_filter:
                 if side == "buy" and not mom_up: continue
@@ -215,8 +244,24 @@ def _relax(name, **over):
     kw = {**FULL, **over}
     return Variant(name, **kw)
 
+LIVE = dict(trend_filter=True, volume_surge=True, imbalance=0.4, maker_entry=True,
+            max_spread_bps=8.0, hours_filter=True, trailing_pct=0.3)
+
+def _live(name, **over):
+    return Variant(name, **{**LIVE, **over})
+
 VARIANTS = [
-    _relax("フル装備 (今の設定)"),
+    _live("いまのライブ設定"),
+    _live("+A 3秒連続確認", confirm_ticks=3),
+    _live("+B 値幅0.3%下限", min_range_pct=0.3),
+    _live("+C 5分見切り", scratch_sec=300),
+    _live("+D 寄り5分回避", skip_open_min=5),
+    _live("+E 負け銘柄30分出禁", loss_cooldown_sec=1800),
+    _live("+A+B", confirm_ticks=3, min_range_pct=0.3),
+    _live("+A+B+C", confirm_ticks=3, min_range_pct=0.3, scratch_sec=300),
+    _live("+A+B+C+D+E", confirm_ticks=3, min_range_pct=0.3, scratch_sec=300,
+          skip_open_min=5, loss_cooldown_sec=1800),
+    _relax("フル装備 (旧: 吸収あり)"),
     _relax("緩和a: 時間帯制限なし", hours_filter=False),
     _relax("緩和b: imbalance 0.3", imbalance=0.3),
     _relax("緩和c: 出来高1.5倍", surge_ratio=1.5),

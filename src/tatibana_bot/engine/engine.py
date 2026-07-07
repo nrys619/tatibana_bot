@@ -57,6 +57,7 @@ class LiveEngine:
         max_watch: int | None = None,
         max_total_exposure: float | None = None,
         entry_windows: list[tuple[dtime, dtime]] | None = None,
+        loss_cooldown_sec: float = 0.0,
     ):
         self._md = market_data
         self._executor = executor
@@ -76,6 +77,8 @@ class LiveEngine:
         self._last_scan = time.monotonic()
         self._max_exposure = max_total_exposure
         self._entry_windows = entry_windows
+        self._loss_cooldown = loss_cooldown_sec
+        self._code_cooldown: dict[str, datetime] = {}  # E: 負けた銘柄の出禁期限
         self._last_px: dict[str, tuple[float, int]] = {}  # code -> (価格, 異常連続数)
 
         self._tapes: dict[str, TapeReader] = {c: TapeReader() for c in self._watch}
@@ -201,11 +204,17 @@ class LiveEngine:
                 pnl = self._executor.close_position(position, price, reason)
                 self._log.close_trade(trade_id, now, price, pnl, reason)
                 del self._positions[code]
+                if pnl < 0 and self._loss_cooldown > 0:  # E: 負けた土俵で取り返さない
+                    from datetime import timedelta
+                    self._code_cooldown[code] = now + timedelta(seconds=self._loss_cooldown)
             return  # 保有中は新規判定しない
 
         # --- 新規エントリー判定 ---
         if anomalies or not can_open_new(now):
             return
+        until = self._code_cooldown.get(code)
+        if until is not None and now < until:
+            return  # E: この銘柄は負け直後の出禁中
         # ③参加時間帯の限定 (出来高が集中する時間だけ戦う)
         if self._entry_windows and not any(
                 s <= now.time() < e for s, e in self._entry_windows):

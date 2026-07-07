@@ -70,6 +70,7 @@ def main() -> None:
             volume_surge=cfg.signals.get("volume_surge", False),
             absorption=cfg.signals.get("absorption", False),
             breakout_only=cfg.signals.get("breakout_only", False),
+            min_range_pct=float(cfg.signals.get("min_range_pct", 0.0)),
         ),
         ml_scorer=scorer,
     )
@@ -143,6 +144,7 @@ def main() -> None:
             max_watch=cfg.screening.top_n,
             max_total_exposure=cfg.risk.get("max_total_exposure"),
             entry_windows=entry_windows,
+            loss_cooldown_sec=float(cfg.signals.get("loss_cooldown_sec", 0)),
         )
         engine.run()
 

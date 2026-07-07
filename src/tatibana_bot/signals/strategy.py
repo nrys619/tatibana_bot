@@ -37,6 +37,7 @@ class StrategyParams:
     surge_ratio: float = 2.0
     window_sec: float = 300.0
     min_history: int = 60
+    min_range_pct: float = 0.0  # B: 直近5分の値幅がこの%未満の銘柄は見送り
 
 
 @dataclass
@@ -116,6 +117,11 @@ class MicroStrategy:
                 return None  # 観測不足 (監視入り直後) は様子見
             _, px_old, ask_old, bid_old = st.hist[0]
 
+            if self._p.min_range_pct > 0:  # B: 死んだ銘柄には入らない
+                prices = [h[1] for h in st.hist]
+                rng = (max(prices) - min(prices)) / price * 100
+                if rng < self._p.min_range_pct:
+                    return None
             if self._p.trend_filter:  # cis: 上がっているものだけ買う
                 if side == Side.BUY and not price > px_old:
                     return None
