@@ -251,7 +251,8 @@ def _live(name, **over):
     return Variant(name, **{**LIVE, **over})
 
 VARIANTS = [
-    _live("いまのライブ設定"),
+    _live("★現ライブ設定 (B+E込み)", min_range_pct=0.3, loss_cooldown_sec=1800),
+    _live("参考: B/Eなし"),
     _live("+A 3秒連続確認", confirm_ticks=3),
     _live("+B 値幅0.3%下限", min_range_pct=0.3),
     _live("+C 5分見切り", scratch_sec=300),

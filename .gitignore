@@ -17,6 +17,7 @@ secrets/
 __pycache__/
 *.pyc
 *.egg-info/
+.venv
 .venv/
 venv/
 build/

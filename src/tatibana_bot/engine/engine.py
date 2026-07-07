@@ -151,8 +151,9 @@ class LiveEngine:
     def _tick(self, codes: list[str], now: datetime) -> None:
         try:
             boards = self._md.get_boards(codes)
-        except Exception:
-            logger.warning("board fetch failed", exc_info=True)
+        except Exception as e:
+            # デモサーバーは高頻度で接続を切るため、全文トレースはログを圧迫する
+            logger.warning("board fetch failed: %s", str(e)[:120])
             return
 
         for code, board in boards.items():
