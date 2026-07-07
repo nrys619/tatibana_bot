@@ -170,3 +170,45 @@ def candidate_codes(
                 continue
             counts[row["code"]] = counts.get(row["code"], 0) + 1
     return counts
+
+
+def rows_to_watch_items(
+    rows: list[dict],
+    top_n: int = 5,
+    max_price_jpy: float | None = None,
+    min_turnover_jpy: float = 0.0,
+):
+    """ランキング行を予算・流動性でふるいにかけ、監視銘柄リストに変換する."""
+    from tatibana_bot.models import WatchItem
+
+    items = []
+    for row in rows:
+        if row.get("market") not in _STOCK_MARKETS:
+            continue
+        price = row.get("price")
+        if not isinstance(price, (int, float)):
+            continue
+        if max_price_jpy is not None and price > max_price_jpy:
+            continue
+        turnover = row.get("turnover_jpy")
+        if isinstance(turnover, (int, float)) and turnover < min_turnover_jpy:
+            continue
+        items.append(WatchItem(code=row["code"], name=row.get("name", ""),
+                               notes=[f"intraday_scan#{row.get('rank', '?')}"]))
+        if len(items) >= top_n:
+            break
+    return items
+
+
+def scan_daytrade_watchlist(
+    top_n: int = 5,
+    max_price_jpy: float | None = None,
+    min_turnover_jpy: float = 0.0,
+    market: int = 0,
+    afternoon: bool = False,
+):
+    """場中用: デイトレ適性ランキング(リアルタイム更新)から監視候補を選ぶ."""
+    kind = "day_trading_afternoon" if afternoon else "day_trading_morning"
+    rows = fetch_ranking(kind, market=market)
+    return rows_to_watch_items(rows, top_n=top_n, max_price_jpy=max_price_jpy,
+                               min_turnover_jpy=min_turnover_jpy)

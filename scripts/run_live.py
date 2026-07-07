@@ -70,6 +70,29 @@ def main() -> None:
         ml_scorer=scorer,
     )
 
+    # 場中スキャン: 松井デイトレ適性ランキングで監視リストを定期入れ替え
+    watch_updater = None
+    scan_interval = 300.0
+    scan_cfg = cfg.engine.get("intraday_scan")
+    if scan_cfg is not None and scan_cfg.get("enabled", False):
+        from datetime import datetime as _dt, time as _time
+
+        from tatibana_bot.data.matsui import scan_daytrade_watchlist
+        from tatibana_bot.risk.sizing import UNIT_SHARES
+
+        max_price = cfg.risk.max_position_value / UNIT_SHARES
+        scan_interval = float(scan_cfg.get("interval_sec", 300))
+
+        def watch_updater():
+            return scan_daytrade_watchlist(
+                top_n=cfg.screening.top_n,
+                max_price_jpy=max_price,
+                min_turnover_jpy=cfg.screening.min_turnover_jpy,
+                afternoon=_dt.now().time() >= _time(12, 0),
+            )
+
+        logger.info("intraday scan: enabled (every %.0fs)", scan_interval)
+
     session = create_session(cfg)
 
     with session:
@@ -94,6 +117,8 @@ def main() -> None:
             max_hold_sec=cfg.signals.max_hold_sec,
             poll_interval_sec=cfg.engine.poll_interval_sec,
             recorder=SnapshotRecorder(cfg.paths.data_dir) if cfg.engine.record_snapshots else None,
+            watch_updater=watch_updater,
+            scan_interval_sec=scan_interval,
         )
         engine.run()
 

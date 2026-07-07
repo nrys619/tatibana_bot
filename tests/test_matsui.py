@@ -34,3 +34,23 @@ def test_fetch_ranking_rejects_unknown_kind():
 def test_ranking_kinds_defined():
     assert "day_trading_afternoon" in RANKINGS
     assert "tick" in RANKINGS
+
+
+def test_rows_to_watch_items_filters():
+    from tatibana_bot.data.matsui import rows_to_watch_items
+
+    rows = [
+        {"rank": 1, "code": "285A", "market": "東P", "name": "キオクシア",
+         "price": 76260.0, "turnover_jpy": 1.5e12},   # 値がさ → 除外
+        {"rank": 2, "code": "1570", "market": "東E", "name": "日経レバ",
+         "price": 250.0, "turnover_jpy": 1e11},        # ETF → 除外
+        {"rank": 3, "code": "5802", "market": "東P", "name": "住友電工",
+         "price": 2546.0, "turnover_jpy": 5e10},       # 採用
+        {"rank": 4, "code": "9999", "market": "東G", "name": "薄商い",
+         "price": 500.0, "turnover_jpy": 1e8},         # 流動性不足 → 除外
+        {"rank": 5, "code": "6526", "market": "東P", "name": "ソシオネクスト",
+         "price": 2685.5, "turnover_jpy": 8e10},       # 採用
+    ]
+    items = rows_to_watch_items(rows, top_n=5, max_price_jpy=3000, min_turnover_jpy=1e9)
+    assert [w.code for w in items] == ["5802", "6526"]
+    assert items[0].notes == ["intraday_scan#3"]

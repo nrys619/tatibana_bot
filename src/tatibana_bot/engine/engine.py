@@ -52,6 +52,8 @@ class LiveEngine:
         max_hold_sec: int = 1800,
         poll_interval_sec: float = 1.0,
         recorder: SnapshotRecorder | None = None,
+        watch_updater=None,
+        scan_interval_sec: float = 300.0,
     ):
         self._md = market_data
         self._executor = executor
@@ -64,6 +66,11 @@ class LiveEngine:
         self._max_hold_sec = max_hold_sec
         self._poll_interval = poll_interval_sec
         self._recorder = recorder
+        # 場中の監視リスト入れ替え (松井デイトレ適性ランキング等)
+        self._watch_updater = watch_updater
+        self._scan_interval = scan_interval_sec
+        self._max_watch = max(len(watchlist), 1)
+        self._last_scan = time.monotonic()
 
         self._tapes: dict[str, TapeReader] = {c: TapeReader() for c in self._watch}
         self._anomaly = AnomalyDetector()
@@ -87,12 +94,49 @@ class LiveEngine:
                         break
                     time.sleep(5)
                     continue
-                self._tick(codes, now)
+                if (self._watch_updater is not None
+                        and time.monotonic() - self._last_scan >= self._scan_interval):
+                    self._last_scan = time.monotonic()
+                    self._refresh_watchlist()
+                self._tick(list(self._watch.keys()), now)
                 time.sleep(self._poll_interval)
         finally:
             self._close_all("engine_shutdown")
 
     # ------------------------------------------------------------------
+
+    def _refresh_watchlist(self) -> None:
+        """場中スキャンの結果で監視リストを入れ替える。保有中の銘柄は外さない."""
+        try:
+            candidates = self._watch_updater()
+        except Exception:
+            logger.warning("intraday watchlist scan failed — keeping current list",
+                           exc_info=True)
+            return
+        if not candidates:
+            return
+
+        new: dict[str, WatchItem] = {}
+        for code in self._positions:  # 保有銘柄は必ず残す
+            if code in self._watch:
+                new[code] = self._watch[code]
+        for item in candidates:
+            if len(new) >= self._max_watch:
+                break
+            if item.code not in new:
+                new[item.code] = self._watch.get(item.code, item)
+
+        added = set(new) - set(self._watch)
+        removed = set(self._watch) - set(new)
+        if not added and not removed:
+            return
+        for code in added:
+            self._tapes[code] = TapeReader()
+        for code in removed:
+            self._tapes.pop(code, None)
+        self._watch = new
+        logger.info("watchlist updated: +%s -%s -> %s",
+                    sorted(added) or "-", sorted(removed) or "-", sorted(new))
 
     def _tick(self, codes: list[str], now: datetime) -> None:
         try:

@@ -65,3 +65,7 @@ engine:
   mode: paper               # paper: 発注せずログのみ / live: 実発注
   poll_interval_sec: 1.0
   record_snapshots: true    # 板スナップショットを保存 (③のML学習データになる)
+  # 場中に松井デイトレ適性ランキングで監視リストを入れ替える
+  intraday_scan:
+    enabled: true
+    interval_sec: 300         # 5分おき
