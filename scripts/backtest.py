@@ -51,13 +51,22 @@ class CodeState:
     tick_n: int = 0
 
 
+MAX_PRICE = 3000.0  # 実機と同じ予算フィルタ (1単元が建玉上限30万円に収まる銘柄のみ)
+
+
 def _load_day(path: Path) -> dict[str, list[dict]]:
     per_code: dict[str, list[dict]] = {}
     with open(path) as f:
         for line in f:
             r = json.loads(line)
             per_code.setdefault(r["code"], []).append(r)
-    for rows in per_code.values():
+    # 実機が買えない値がさ株を除外 (代表価格で判定)
+    for code in list(per_code):
+        rows = per_code[code]
+        prices = [r["last_price"] for r in rows if r.get("last_price")]
+        if not prices or sorted(prices)[len(prices) // 2] > MAX_PRICE:
+            del per_code[code]
+            continue
         rows.sort(key=lambda r: r["ts"])
     return per_code
 
