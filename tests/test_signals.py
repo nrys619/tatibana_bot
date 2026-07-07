@@ -83,3 +83,37 @@ def test_strategy_ml_veto(make_board):
         {"buy_ratio": 0.9, "tick_count": 20.0, "price_drift": 5.0},
     )
     assert signal is None  # MLが弱気ならエントリーしない
+
+
+def test_trader_filters_require_history_and_trend(make_board):
+    """順張り+観測不足フィルタ: 履歴が足りない間は見送り、下落中の買いも見送り."""
+    from datetime import datetime, timedelta
+
+    params = StrategyParams(imbalance_entry=0.3, tape_ratio_entry=0.6,
+                            trend_filter=True, min_history=5)
+    strategy = MicroStrategy(params)
+    ts = datetime(2026, 7, 1, 9, 30, 0)
+    feats = {"buy_ratio": 0.9, "tick_count": 5.0, "price_drift": 0.0}
+
+    board = _strong_long_board(make_board)
+    # 観測が足りないうちは強い買い板でも見送り
+    assert strategy.evaluate(board, feats, ts=ts) is None
+
+    # 価格が下がってきた履歴を与える (5分前=1010 > 現在1000 = 下落中)
+    for i, px in enumerate([1010.0, 1008.0, 1006.0, 1004.0, 1002.0, 1000.0]):
+        b = make_board(bids=((px - 1, 900), (px - 2, 800), (px - 3, 700)),
+                       asks=((px, 100), (px + 1, 100), (px + 2, 100)),
+                       last_price=px, ts=ts + timedelta(seconds=i))
+        strategy.observe(b, feats, ts=ts + timedelta(seconds=i))
+    # 下落中なので買いシグナルは順張りフィルタで却下
+    assert strategy.evaluate(board, feats, ts=ts + timedelta(seconds=6)) is None
+
+    # 上昇の履歴に置き換えると通る
+    strategy.drop_code(board.code)
+    for i, px in enumerate([990.0, 992.0, 994.0, 996.0, 998.0, 1000.0]):
+        b = make_board(bids=((px - 1, 900), (px - 2, 800), (px - 3, 700)),
+                       asks=((px, 100), (px + 1, 100), (px + 2, 100)),
+                       last_price=px, ts=ts + timedelta(seconds=i))
+        strategy.observe(b, feats, ts=ts + timedelta(seconds=i))
+    signal = strategy.evaluate(board, feats, ts=ts + timedelta(seconds=6))
+    assert signal is not None and signal.side == Side.BUY

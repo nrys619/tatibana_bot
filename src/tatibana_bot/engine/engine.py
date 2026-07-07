@@ -54,6 +54,8 @@ class LiveEngine:
         recorder: SnapshotRecorder | None = None,
         watch_updater=None,
         scan_interval_sec: float = 300.0,
+        max_watch: int | None = None,
+        max_total_exposure: float | None = None,
     ):
         self._md = market_data
         self._executor = executor
@@ -69,8 +71,10 @@ class LiveEngine:
         # 場中の監視リスト入れ替え (松井デイトレ適性ランキング等)
         self._watch_updater = watch_updater
         self._scan_interval = scan_interval_sec
-        self._max_watch = max(len(watchlist), 1)
+        self._max_watch = max_watch or max(len(watchlist), 1)
         self._last_scan = time.monotonic()
+        self._max_exposure = max_total_exposure
+        self._last_px: dict[str, tuple[float, int]] = {}  # code -> (価格, 異常連続数)
 
         self._tapes: dict[str, TapeReader] = {c: TapeReader() for c in self._watch}
         self._anomaly = AnomalyDetector()
@@ -134,6 +138,7 @@ class LiveEngine:
             self._tapes[code] = TapeReader()
         for code in removed:
             self._tapes.pop(code, None)
+            self._strategy.drop_code(code)
         self._watch = new
         logger.info("watchlist updated: +%s -%s -> %s",
                     sorted(added) or "-", sorted(removed) or "-", sorted(new))
@@ -152,6 +157,23 @@ class LiveEngine:
         tape = self._tapes[code]
         tape.infer_ticks(board)
         tape_feats = tape.features()
+
+        # 異常価格ガード: 1tickで3%以上飛んだ価格はデータ不良とみなして無視する。
+        # ただし6tick連続で同水準なら本物の急変として受け入れる。
+        px_now = board.last_price or board.mid
+        if px_now is not None:
+            prev, streak = self._last_px.get(code, (px_now, 0))
+            if prev > 0 and abs(px_now / prev - 1) > 0.03:
+                if streak < 5:
+                    self._last_px[code] = (prev, streak + 1)
+                    logger.warning("glitch tick ignored: %s %.1f -> %.1f", code, prev, px_now)
+                    return
+                self._last_px[code] = (px_now, 0)  # 6tick続いたら新水準を受け入れ
+            else:
+                self._last_px[code] = (px_now, 0)
+
+        # 戦略のローリング観測を更新 (保有中も含め毎tick)
+        self._strategy.observe(board, tape_feats, ts=now)
 
         anomalies = self._anomaly.check(board)
         for a in anomalies:
@@ -204,6 +226,12 @@ class LiveEngine:
             return
 
         quantity = position_size(signal, self._sizing, self._regime_mult)
+        if quantity > 0 and self._max_exposure is not None:
+            exposure = sum(p.entry_price * p.quantity for p, _ in self._positions.values())
+            if exposure + quantity * signal.entry_price > self._max_exposure:
+                self._log.log_signal(now, code, signal.side.value, signal.confidence,
+                                     signal.reason + " | exposure cap", acted=False)
+                return
         if quantity <= 0:
             self._log.log_signal(now, code, signal.side.value, signal.confidence,
                                  signal.reason + " | size=0", acted=False)

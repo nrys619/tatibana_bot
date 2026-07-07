@@ -66,6 +66,10 @@ def main() -> None:
             max_spread_bps=cfg.signals.max_spread_bps,
             target_pct=cfg.signals.target_pct,
             stop_pct=cfg.signals.stop_pct,
+            trend_filter=cfg.signals.get("trend_filter", False),
+            volume_surge=cfg.signals.get("volume_surge", False),
+            absorption=cfg.signals.get("absorption", False),
+            breakout_only=cfg.signals.get("breakout_only", False),
         ),
         ml_scorer=scorer,
     )
@@ -119,6 +123,8 @@ def main() -> None:
             recorder=SnapshotRecorder(cfg.paths.data_dir) if cfg.engine.record_snapshots else None,
             watch_updater=watch_updater,
             scan_interval_sec=scan_interval,
+            max_watch=cfg.screening.top_n,
+            max_total_exposure=cfg.risk.get("max_total_exposure"),
         )
         engine.run()
 

@@ -35,7 +35,7 @@ universe:
     top_k: 20     # 各ランキングの上位何銘柄を候補に入れるか
 
 screening:
-  top_n: 5                 # 監視リストに載せる銘柄数
+  top_n: 10                # 監視リストに載せる銘柄数
   min_turnover_jpy: 1.0e+9  # 最低売買代金 (流動性フィルタ)
   label_range_pct: 3.0     # 「翌日この値幅%以上動いたらデイトレ向き」のラベル閾値
   history_days: 750
@@ -46,7 +46,12 @@ disclosure:
   min_impact_for_watchlist: 3
 
 signals:
-  imbalance_entry: 0.3      # 板の買い/売り不均衡の閾値
+  imbalance_entry: 0.4      # 板の買い/売り不均衡の閾値
+  # 有名デイトレーダー手法のフィルタ (バックテストで選抜、毎日再検証)
+  trend_filter: true        # cis流: 5分前より上の時だけ買う (下なら売りのみ)
+  volume_surge: true        # テスタ流: 約定が平常時の2倍以上の時だけ入る
+  absorption: true          # テスタ流: 反対側の板が食われている時だけ入る
+  breakout_only: false      # cis流: 本日高値/安値圏ブレイクのみ (現在OFF)
   tape_ratio_entry: 0.6     # 歩み値の買い約定比率の閾値
   max_spread_bps: 20        # スプレッドがこれ以上開いていたらエントリーしない
   target_pct: 0.8           # 利確幅 (%)
@@ -57,6 +62,7 @@ risk:
   equity_jpy: 1000000       # 運用資金
   risk_per_trade: 0.005     # 1トレードで許容する損失 (資金比)
   max_position_value: 300000
+  max_total_exposure: 2500000  # 建玉総額の上限 (信用余力の範囲内)
   daily_loss_limit: 0.02    # 日次損失がこの比率に達したら当日停止
   max_consecutive_losses: 4
   regime_index: "^N225"     # 地合い判定に使う指数
