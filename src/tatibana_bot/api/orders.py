@@ -69,8 +69,10 @@ class OrderGateway:
             sSecondPassword=self._second_pw,
         )
 
-    def new_margin_order(self, code: str, side: Side, quantity: int) -> dict[str, Any]:
-        """成行の信用新規注文 (制度信用)。sideがSELLなら空売り."""
+    def new_margin_order(
+        self, code: str, side: Side, quantity: int, price: float | None = None
+    ) -> dict[str, Any]:
+        """信用新規注文 (制度信用)。price=None なら成行、指定すれば指値。"""
         return self._session.request(
             "CLMKabuNewOrder",
             sZyoutoekiKazeiC="1",
@@ -78,7 +80,7 @@ class OrderGateway:
             sSizyouC="00",
             sBaibaiKubun=BAIBAI[side],
             sCondition="0",
-            sOrderPrice="0",            # 成行
+            sOrderPrice="0" if price is None else f"{price:g}",
             sOrderSuryou=str(quantity),
             sGenkinShinyouKubun="2",    # 2=信用新規
             sOrderExpireDay="0",
@@ -132,6 +134,13 @@ class OrderGateway:
     def list_orders(self) -> dict[str, Any]:
         """当日の注文一覧."""
         return self._session.request("CLMOrderList")
+
+    def order_status(self, order_number: str) -> dict[str, Any] | None:
+        """注文番号で当日注文の状態を引く (見つからなければ None)."""
+        for o in self.list_orders().get("aOrderList", []) or []:
+            if str(o.get("sOrderOrderNumber", "")) == str(order_number):
+                return o
+        return None
 
     def cash_balance(self) -> dict[str, Any]:
         """買付余力の照会."""

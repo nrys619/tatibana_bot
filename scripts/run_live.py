@@ -97,10 +97,27 @@ def main() -> None:
 
         logger.info("intraday scan: enabled (every %.0fs)", scan_interval)
 
+    # ③参加時間帯 (config: signals.entry_windows)
+    entry_windows = None
+    raw_windows = cfg.signals.get("entry_windows")
+    if raw_windows:
+        from datetime import time as _t
+        entry_windows = [
+            (_t(*map(int, s.split(":"))), _t(*map(int, e.split(":"))))
+            for s, e in raw_windows
+        ]
+        logger.info("entry windows: %s", raw_windows)
+
     session = create_session(cfg)
 
     with session:
-        executor = Executor(mode, OrderGateway(session) if mode == "live" else None)
+        executor = Executor(
+            mode,
+            OrderGateway(session) if mode == "live" else None,
+            maker_entry=cfg.engine.get("maker_entry", False),
+            fill_timeout_sec=float(cfg.engine.get("fill_timeout_sec", 8)),
+            trailing_pct=float(cfg.signals.get("trailing_pct", 0.0)),
+        )
         engine = LiveEngine(
             market_data=MarketDataClient(session),
             executor=executor,
@@ -125,6 +142,7 @@ def main() -> None:
             scan_interval_sec=scan_interval,
             max_watch=cfg.screening.top_n,
             max_total_exposure=cfg.risk.get("max_total_exposure"),
+            entry_windows=entry_windows,
         )
         engine.run()
 

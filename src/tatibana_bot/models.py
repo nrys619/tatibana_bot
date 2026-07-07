@@ -88,6 +88,8 @@ class Position:
     stop_price: float
     target_price: float
     max_hold_sec: int
+    trailing_pct: float = 0.0   # >0ならピークからこの%押しで決済 (targetの代わり)
+    peak: float = 0.0           # トレーリング用の最良価格 (should_exitが更新)
 
     def pnl(self, current_price: float) -> float:
         sign = 1 if self.side == Side.BUY else -1

@@ -37,6 +37,9 @@ class Variant:
     absorption: bool = False        # テスタ: 売り板が減っている時だけ買う (逆も)
     resilience: bool = False        # テスタ: 直近下げから即戻した銘柄だけ買う
     momentum_exit: bool = False     # cis: 5分モメンタムが逆転したら早期撤退
+    maker_entry: bool = False       # ①指値エントリー: 入場コストをゼロと仮定 (楽観シナリオ)
+    hours_filter: bool = False      # ③時間帯限定: 9:00-10:00 と 14:30-15:00 のみ新規
+    trailing_pct: float = 0.0       # ⑤トレーリング: ピークからこの%押したら決済 (0=無効)
 
 
 @dataclass
@@ -92,9 +95,21 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]]) -> dict:
 
             # --- 決済判定 ---
             if pos is not None:
-                side, epx, et, stop, target = pos
+                side, epx, et, stop, target, peak = pos
                 exit_reason = None
-                if side == "buy":
+                if v.trailing_pct > 0:  # ⑤利確目標なし、ピークからの押しで決済
+                    if side == "buy":
+                        peak = max(peak, px)
+                        if px <= stop: exit_reason = "stop"
+                        elif px <= peak * (1 - v.trailing_pct / 100) and peak > epx:
+                            exit_reason = "trail"
+                    else:
+                        peak = min(peak, px)
+                        if px >= stop: exit_reason = "stop"
+                        elif px >= peak * (1 + v.trailing_pct / 100) and peak < epx:
+                            exit_reason = "trail"
+                    pos = (side, epx, et, stop, target, peak)
+                elif side == "buy":
                     if px <= stop: exit_reason = "stop"
                     elif px >= target: exit_reason = "target"
                     elif v.momentum_exit and mom_dn and t - et > 60: exit_reason = "mom"
@@ -116,6 +131,10 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]]) -> dict:
             # --- エントリー判定 ---
             if t < cooldown_until or len(st.hist) < 60:
                 continue
+            if v.hours_filter:  # ③ 寄り後1時間 + 引け前 (14:30-15:00) のみ
+                hhmm = r["ts"][11:16]
+                if not ("09:00" <= hhmm < "10:00" or "14:30" <= hhmm < "15:00"):
+                    continue
             if r.get("spread_bps", 99) > v.max_spread_bps:
                 continue
             imb, br, micro = r.get("imbalance", 0), r.get("buy_ratio", 0.5), r.get("microprice_dev", 0)
@@ -142,15 +161,19 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]]) -> dict:
                 if side == "buy" and not (lo < px * 0.9985 and px > lo * 1.001): continue
                 if side == "sell" and not (hi > px * 1.0015 and px < hi * 0.999): continue
 
-            cost = px * (r.get("spread_bps", 5) / 2 + SLIP_BP) / 10000
-            epx = px + cost if side == "buy" else px - cost
+            if v.maker_entry:
+                epx = px  # ①指値: コストゼロで約定と仮定 (取り逃しは考慮しない楽観値)
+            else:
+                cost = px * (r.get("spread_bps", 5) / 2 + SLIP_BP) / 10000
+                epx = px + cost if side == "buy" else px - cost
             sign = 1 if side == "buy" else -1
             pos = (side, epx, t,
                    epx * (1 - sign * v.stop_pct / 100),
-                   epx * (1 + sign * v.target_pct / 100))
+                   epx * (1 + sign * v.target_pct / 100),
+                   epx)
 
         if pos is not None:  # 引けで強制決済
-            side, epx, et, _, _ = pos
+            side, epx, et, _, _, _ = pos
             px = rows[-1]["last_price"]
             pnl = (px - epx) * UNIT if side == "buy" else (epx - px) * UNIT
             trades.append(pnl)
@@ -165,8 +188,20 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]]) -> dict:
     }
 
 
+BASE_E = dict(absorption=True, volume_surge=True, trend_filter=True, imbalance=0.4)
+
 VARIANTS = [
     Variant("現行 (基準)"),
+    Variant("E (今の設定)", **BASE_E),
+    Variant("E+①指値", **BASE_E, maker_entry=True),
+    Variant("E+②spread8", **BASE_E, max_spread_bps=8.0),
+    Variant("E+③時間帯", **BASE_E, hours_filter=True),
+    Variant("E+⑤トレール.3", **BASE_E, trailing_pct=0.3),
+    Variant("E+①②③", **BASE_E, maker_entry=True, max_spread_bps=8.0, hours_filter=True),
+    Variant("E+①②③⑤", **BASE_E, maker_entry=True, max_spread_bps=8.0,
+            hours_filter=True, trailing_pct=0.3),
+    Variant("順+量+①②③⑤", trend_filter=True, volume_surge=True, maker_entry=True,
+            max_spread_bps=8.0, hours_filter=True, trailing_pct=0.3),
     Variant("厳選A: 順+量 imb.45", trend_filter=True, volume_surge=True,
             imbalance=0.45, tape_ratio=0.7),
     Variant("厳選B: A+広RR .6/1.2", trend_filter=True, volume_surge=True,

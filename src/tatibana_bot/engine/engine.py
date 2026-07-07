@@ -13,7 +13,7 @@ from datetime import datetime, time as dtime
 from tatibana_bot.api.client import MarketDataClient
 from tatibana_bot.data.store import SnapshotRecorder, TradeLog
 from tatibana_bot.engine.executor import Executor
-from tatibana_bot.models import Board, Position, WatchItem
+from tatibana_bot.models import Board, Position, Side, WatchItem
 from tatibana_bot.risk.anomaly import AnomalyDetector
 from tatibana_bot.risk.limits import RiskLimits
 from tatibana_bot.risk.sizing import SizingParams, position_size
@@ -56,6 +56,7 @@ class LiveEngine:
         scan_interval_sec: float = 300.0,
         max_watch: int | None = None,
         max_total_exposure: float | None = None,
+        entry_windows: list[tuple[dtime, dtime]] | None = None,
     ):
         self._md = market_data
         self._executor = executor
@@ -74,6 +75,7 @@ class LiveEngine:
         self._max_watch = max_watch or max(len(watchlist), 1)
         self._last_scan = time.monotonic()
         self._max_exposure = max_total_exposure
+        self._entry_windows = entry_windows
         self._last_px: dict[str, tuple[float, int]] = {}  # code -> (価格, 異常連続数)
 
         self._tapes: dict[str, TapeReader] = {c: TapeReader() for c in self._watch}
@@ -204,6 +206,10 @@ class LiveEngine:
         # --- 新規エントリー判定 ---
         if anomalies or not can_open_new(now):
             return
+        # ③参加時間帯の限定 (出来高が集中する時間だけ戦う)
+        if self._entry_windows and not any(
+                s <= now.time() < e for s, e in self._entry_windows):
+            return
         today = now.strftime("%Y-%m-%d")
         if not self._limits.check(
             self._log.today_realized_pnl(today), self._log.recent_results(10)
@@ -237,9 +243,21 @@ class LiveEngine:
                                  signal.reason + " | size=0", acted=False)
             return
 
-        position = self._executor.open_position(signal, quantity, self._max_hold_sec)
+        # ①指値エントリー: 買いは最良買い気配、売りは最良売り気配に置く
+        limit_px = None
+        if signal.side == Side.BUY and board.bids:
+            limit_px = board.bids[0].price
+        elif signal.side == Side.SELL and board.asks:
+            limit_px = board.asks[0].price
+
+        position = self._executor.open_position(
+            signal, quantity, self._max_hold_sec, limit_price=limit_px)
+        if position is None:  # 指値が約定しなかった (取り逃しはゼロ円)
+            self._log.log_signal(now, code, signal.side.value, signal.confidence,
+                                 signal.reason + " | limit not filled", acted=False)
+            return
         trade_id = self._log.open_trade(code, signal.side.value, quantity,
-                                        now, signal.entry_price, signal.reason)
+                                        now, position.entry_price, signal.reason)
         self._log.log_signal(now, code, signal.side.value, signal.confidence,
                              signal.reason, acted=True)
         self._positions[code] = (position, trade_id)

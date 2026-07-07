@@ -53,10 +53,14 @@ signals:
   absorption: true          # テスタ流: 反対側の板が食われている時だけ入る
   breakout_only: false      # cis流: 本日高値/安値圏ブレイクのみ (現在OFF)
   tape_ratio_entry: 0.6     # 歩み値の買い約定比率の閾値
-  max_spread_bps: 20        # スプレッドがこれ以上開いていたらエントリーしない
+  max_spread_bps: 8         # ②スプレッドがこれ以上開いていたらエントリーしない
   target_pct: 0.8           # 利確幅 (%)
   stop_pct: 0.4             # 損切り幅 (%)
   max_hold_sec: 1800        # 最大保有時間 (秒)
+  trailing_pct: 0.3         # ⑤ピークからこの%押したら決済 (0で固定利確に戻る)
+  entry_windows:            # ③新規エントリーを許可する時間帯
+    - ["09:00", "10:00"]
+    - ["14:30", "15:00"]
 
 risk:
   equity_jpy: 1000000       # 運用資金
@@ -70,6 +74,8 @@ risk:
 engine:
   mode: paper               # paper: 発注せずログのみ / live: 実発注
   poll_interval_sec: 1.0
+  maker_entry: true         # ①新規は指値で入る (未約定なら8秒で取消)
+  fill_timeout_sec: 8
   record_snapshots: true    # 板スナップショットを保存 (③のML学習データになる)
   # 場中に松井デイトレ適性ランキングで監視リストを入れ替える
   intraday_scan:

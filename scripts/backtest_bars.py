@@ -18,7 +18,7 @@ UNIT = 100
 COST_BP = 5.0          # 往復コストの半分 (スプレッド+滑り, 片道bp)
 MAX_HOLD_BARS = 6      # 30分 (5分足×6本)
 SESSION_START = "09:00"
-NO_ENTRY_AFTER = "14:30"
+NO_ENTRY_AFTER = "15:00"
 
 
 @dataclass
@@ -29,6 +29,9 @@ class BarVariant:
     breakout: bool = False      # 当日高値(安値)更新で入る
     stop_pct: float = 0.4
     target_pct: float = 0.8
+    maker_entry: bool = False   # ①指値: 入場コストゼロと仮定 (楽観)
+    hours_filter: bool = False  # ③ 9:00-10:00 と 14:30-15:00 のみ新規
+    trailing_pct: float = 0.0   # ⑤ ピークからの押しで決済 (0=無効)
 
 
 def load_bars(code: str) -> pd.DataFrame:
@@ -56,19 +59,32 @@ def run(v: BarVariant, bars: pd.DataFrame) -> list[float]:
             px = closes[i]
             # --- 決済 ---
             if pos is not None:
-                side, epx, ei = pos
+                side, epx, ei, peak = pos
                 sign = 1 if side == "buy" else -1
                 stop = epx * (1 - sign * v.stop_pct / 100)
-                target = epx * (1 + sign * v.target_pct / 100)
-                hit_stop = lows[i] <= stop if side == "buy" else highs[i] >= stop
-                hit_target = highs[i] >= target if side == "buy" else lows[i] <= target
                 exit_px = None
-                if hit_stop:      # 同一バーで両方触れたら不利な方(損切り)を採用
-                    exit_px = stop
-                elif hit_target:
-                    exit_px = target
-                elif i - ei >= MAX_HOLD_BARS or i == len(g) - 1:
-                    exit_px = px
+                hit_stop = lows[i] <= stop if side == "buy" else highs[i] >= stop
+                if v.trailing_pct > 0:
+                    peak = max(peak, highs[i]) if side == "buy" else min(peak, lows[i])
+                    pos = (side, epx, ei, peak)
+                    trail = peak * (1 - sign * v.trailing_pct / 100)
+                    hit_trail = (lows[i] <= trail and peak > epx) if side == "buy" \
+                        else (highs[i] >= trail and peak < epx)
+                    if hit_stop:
+                        exit_px = stop
+                    elif hit_trail:
+                        exit_px = trail
+                    elif i == len(g) - 1:
+                        exit_px = px
+                else:
+                    target = epx * (1 + sign * v.target_pct / 100)
+                    hit_target = highs[i] >= target if side == "buy" else lows[i] <= target
+                    if hit_stop:      # 同一バーで両方触れたら不利な方(損切り)を採用
+                        exit_px = stop
+                    elif hit_target:
+                        exit_px = target
+                    elif i - ei >= MAX_HOLD_BARS or i == len(g) - 1:
+                        exit_px = px
                 if exit_px is not None:
                     cost = exit_px * COST_BP / 10000
                     fill = exit_px - cost if side == "buy" else exit_px + cost
@@ -77,10 +93,14 @@ def run(v: BarVariant, bars: pd.DataFrame) -> list[float]:
                     pos = None
                 continue
             # --- エントリー ---
-            if i < max(v.momentum_bars, 12):
+            if i < max(v.momentum_bars, 3):  # 15分のウォームアップ
                 continue
             if str(times[i].time()) >= NO_ENTRY_AFTER + ":00":
                 continue
+            if v.hours_filter:
+                hhmm = times[i].strftime("%H:%M")
+                if not ("09:00" <= hhmm < "10:00" or "14:30" <= hhmm < "15:00"):
+                    continue
             mom = px - closes[i - v.momentum_bars]
             side = None
             if v.breakout:
@@ -100,14 +120,28 @@ def run(v: BarVariant, bars: pd.DataFrame) -> list[float]:
                 avg_vol = volumes[max(0, i - 12):i].mean()
                 if volumes[i] < v.volume_surge * max(avg_vol, 1):
                     continue
-            cost = px * COST_BP / 10000
-            epx = px + cost if side == "buy" else px - cost
-            pos = (side, epx, i)
+            if v.maker_entry:
+                epx = px
+            else:
+                cost = px * COST_BP / 10000
+                epx = px + cost if side == "buy" else px - cost
+            pos = (side, epx, i, epx)
     return trades
 
 
 VARIANTS = [
     BarVariant("順張りのみ"),
+    BarVariant("順+量+①指値", volume_surge=2.0, maker_entry=True),
+    BarVariant("順+量+③時間帯", volume_surge=2.0, hours_filter=True, momentum_bars=3),
+    BarVariant("順+量+⑤トレール", volume_surge=2.0, trailing_pct=0.3),
+    BarVariant("順+量+①③", volume_surge=2.0, maker_entry=True, hours_filter=True,
+               momentum_bars=3),
+    BarVariant("順+量+①③⑤", volume_surge=2.0, maker_entry=True,
+               hours_filter=True, trailing_pct=0.3, momentum_bars=3),
+    BarVariant("ブレイク+量+①③⑤", breakout=True, volume_surge=2.0,
+               maker_entry=True, hours_filter=True, trailing_pct=0.3, momentum_bars=3),
+    BarVariant("ブレイク+量+①③ト.5", breakout=True, volume_surge=2.0,
+               maker_entry=True, hours_filter=True, trailing_pct=0.5, momentum_bars=3),
     BarVariant("順張り+出来高2倍", volume_surge=2.0),
     BarVariant("ブレイクアウト", breakout=True),
     BarVariant("ブレイク+出来高2倍", breakout=True, volume_surge=2.0),

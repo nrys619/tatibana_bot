@@ -48,3 +48,25 @@ def test_market_hours():
     assert not is_market_open(datetime(2026, 7, 1, 16, 0))
     assert can_open_new(datetime(2026, 7, 1, 14, 59))
     assert not can_open_new(datetime(2026, 7, 1, 15, 10))    # 引け間際は新規なし
+
+
+def test_trailing_stop_exit():
+    """⑤トレーリング: ピークから0.3%押したら決済、含み益が出るまでは発動しない."""
+    from datetime import datetime, timedelta
+    from tatibana_bot.engine.executor import Executor
+    from tatibana_bot.models import Position, Side
+
+    ts = datetime(2026, 7, 7, 9, 30)
+    pos = Position(code="5802", side=Side.BUY, quantity=100,
+                   entry_price=1000.0, entry_ts=ts, stop_price=996.0,
+                   target_price=1008.0, max_hold_sec=1800,
+                   trailing_pct=0.3, peak=1000.0)
+
+    # 上昇中は決済しない (peakが更新されていく)
+    assert Executor.should_exit(pos, 1005.0, ts + timedelta(seconds=10)) is None
+    assert Executor.should_exit(pos, 1010.0, ts + timedelta(seconds=20)) is None
+    assert pos.peak == 1010.0
+    # ピーク1010から0.3% (3.03円) 押したら trail 決済
+    assert Executor.should_exit(pos, 1006.9, ts + timedelta(seconds=30)) == "trail"
+    # 損切りは通常どおり
+    assert Executor.should_exit(pos, 995.0, ts + timedelta(seconds=40)) == "stop"
