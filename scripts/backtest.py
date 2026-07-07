@@ -40,6 +40,8 @@ class Variant:
     maker_entry: bool = False       # ①指値エントリー: 入場コストをゼロと仮定 (楽観シナリオ)
     hours_filter: bool = False      # ③時間帯限定: 9:00-10:00 と 14:30-15:00 のみ新規
     trailing_pct: float = 0.0       # ⑤トレーリング: ピークからこの%押したら決済 (0=無効)
+    surge_ratio: float = 2.0        # 出来高急増の倍率
+    absorption_ratio: float = 0.7   # 吸収判定: 反対板がこの割合未満に減ったら
 
 
 @dataclass
@@ -51,7 +53,16 @@ class CodeState:
     tick_n: int = 0
 
 
-MAX_PRICE = 3000.0  # 実機と同じ予算フィルタ (1単元が建玉上限30万円に収まる銘柄のみ)
+def _max_price() -> float:
+    """実機と同じ予算フィルタ (1単元が建玉上限に収まる株価) を config から算出."""
+    try:
+        from tatibana_bot.config import load_config
+        return float(load_config().risk.max_position_value) / 100
+    except Exception:
+        return 3000.0
+
+
+MAX_PRICE = _max_price()
 
 
 def _load_day(path: Path) -> dict[str, list[dict]]:
@@ -161,10 +172,10 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]]) -> dict:
                 if side == "sell" and px > st.session_low * 1.001: continue
             if v.volume_surge:
                 avg_ticks = st.tick_sum / max(st.tick_n, 1)
-                if r.get("tick_count", 0.0) < 2.0 * max(avg_ticks, 0.5): continue
+                if r.get("tick_count", 0.0) < v.surge_ratio * max(avg_ticks, 0.5): continue
             if v.absorption:
-                if side == "buy" and not (ask_5m > 0 and r.get("ask_depth", 0) < 0.7 * ask_5m): continue
-                if side == "sell" and not (bid_5m > 0 and r.get("bid_depth", 0) < 0.7 * bid_5m): continue
+                if side == "buy" and not (ask_5m > 0 and r.get("ask_depth", 0) < v.absorption_ratio * ask_5m): continue
+                if side == "sell" and not (bid_5m > 0 and r.get("bid_depth", 0) < v.absorption_ratio * bid_5m): continue
             if v.resilience:
                 lo, hi = min(win_prices), max(win_prices)
                 if side == "buy" and not (lo < px * 0.9985 and px > lo * 1.001): continue
@@ -198,8 +209,23 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]]) -> dict:
 
 
 BASE_E = dict(absorption=True, volume_surge=True, trend_filter=True, imbalance=0.4)
+FULL = dict(**BASE_E, maker_entry=True, max_spread_bps=8.0, hours_filter=True, trailing_pct=0.3)
+
+def _relax(name, **over):
+    kw = {**FULL, **over}
+    return Variant(name, **kw)
 
 VARIANTS = [
+    _relax("フル装備 (今の設定)"),
+    _relax("緩和a: 時間帯制限なし", hours_filter=False),
+    _relax("緩和b: imbalance 0.3", imbalance=0.3),
+    _relax("緩和c: 出来高1.5倍", surge_ratio=1.5),
+    _relax("緩和d: 吸収0.85", absorption_ratio=0.85),
+    _relax("緩和e: 吸収なし", absorption=False),
+    _relax("緩和a+c", hours_filter=False, surge_ratio=1.5),
+    _relax("緩和a+c+d", hours_filter=False, surge_ratio=1.5, absorption_ratio=0.85),
+    _relax("緩和a+b+c+e", hours_filter=False, imbalance=0.3, surge_ratio=1.5, absorption=False),
+
     Variant("現行 (基準)"),
     Variant("E (今の設定)", **BASE_E),
     Variant("E+①指値", **BASE_E, maker_entry=True),
