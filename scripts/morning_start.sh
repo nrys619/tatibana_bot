@@ -32,4 +32,10 @@ fi
 nohup "$VENV/bin/python" scripts/run_live.py >> "logs/live_$(date +%Y%m%d).log" 2>&1 &
 disown
 sleep 5
-pgrep -f run_live.py > /dev/null && echo "engine started" >> "$LOG" || echo "ENGINE START FAILED" >> "$LOG"
+if pgrep -f run_live.py > /dev/null; then
+    echo "engine started" >> "$LOG"
+    osascript -e 'display notification "見張りを開始しました (デモ口座)" with title "🤖 tatibana_bot" sound name "Glass"' 2>/dev/null
+else
+    echo "ENGINE START FAILED" >> "$LOG"
+    osascript -e 'display notification "自動起動に失敗! Claudeに「ボット起動して」と伝えてください" with title "❌ tatibana_bot" sound name "Basso"' 2>/dev/null
+fi
