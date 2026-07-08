@@ -255,7 +255,7 @@ def _relax(name, **over):
     return Variant(name, **kw)
 
 LIVE = dict(trend_filter=True, volume_surge=True, imbalance=0.4, maker_entry=True,
-            max_spread_bps=8.0, hours_filter=True, trailing_pct=0.3)
+            max_spread_bps=8.0, hours_filter=False, trailing_pct=0.3)  # 時間帯制限は撤廃済み
 
 def _live(name, **over):
     return Variant(name, **{**LIVE, **over})
