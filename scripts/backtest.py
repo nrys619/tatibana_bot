@@ -47,6 +47,7 @@ class Variant:
     scratch_sec: float = 0.0        # C: この秒数たっても伸びない取引は±0撤退 (0=無効)
     skip_open_min: int = 0          # D: 寄りからこの分数は見送り
     loss_cooldown_sec: float = 0.0  # E: その銘柄で負けたらこの秒数出禁 (0=通常60s)
+    vol_stop: bool = False          # F: 損切り/トレール幅を直近5分の変動幅に連動させる
 
 
 @dataclass
@@ -128,15 +129,19 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]]) -> dict:
                     if move < 0.05:  # 5分たってほぼ伸びていない
                         exit_reason = "scratch"
                 if v.trailing_pct > 0:  # ⑤利確目標なし、ピークからの押しで決済
+                    trail = v.trailing_pct
+                    if v.vol_stop:
+                        rng5 = (max(win_prices) - min(win_prices)) / max(px, 1) * 100
+                        trail = min(max(0.4 * rng5, 0.25), 1.0)
                     if side == "buy":
                         peak = max(peak, px)
                         if px <= stop: exit_reason = "stop"
-                        elif px <= peak * (1 - v.trailing_pct / 100) and peak > epx:
+                        elif px <= peak * (1 - trail / 100) and peak > epx:
                             exit_reason = "trail"
                     else:
                         peak = min(peak, px)
                         if px >= stop: exit_reason = "stop"
-                        elif px >= peak * (1 + v.trailing_pct / 100) and peak < epx:
+                        elif px >= peak * (1 + trail / 100) and peak < epx:
                             exit_reason = "trail"
                     pos = (side, epx, et, stop, target, peak)
                 elif side == "buy":
@@ -216,9 +221,14 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]]) -> dict:
                 cost = px * (r.get("spread_bps", 5) / 2 + SLIP_BP) / 10000
                 epx = px + cost if side == "buy" else px - cost
             sign = 1 if side == "buy" else -1
+            stop_pct, tgt_pct = v.stop_pct, v.target_pct
+            if v.vol_stop:  # F: 荒れた銘柄ほど損切りを広く (ノイズで刈られない)
+                rng5 = (max(win_prices) - min(win_prices)) / px * 100
+                stop_pct = min(max(0.7 * rng5, 0.4), 1.5)
+                tgt_pct = stop_pct * 2
             pos = (side, epx, t,
-                   epx * (1 - sign * v.stop_pct / 100),
-                   epx * (1 + sign * v.target_pct / 100),
+                   epx * (1 - sign * stop_pct / 100),
+                   epx * (1 + sign * tgt_pct / 100),
                    epx)
 
         if pos is not None:  # 引けで強制決済
@@ -250,8 +260,14 @@ LIVE = dict(trend_filter=True, volume_surge=True, imbalance=0.4, maker_entry=Tru
 def _live(name, **over):
     return Variant(name, **{**LIVE, **over})
 
+CUR = dict(min_range_pct=0.3, loss_cooldown_sec=1800)
+
 VARIANTS = [
-    _live("★現ライブ設定 (B+E込み)", min_range_pct=0.3, loss_cooldown_sec=1800),
+    _live("★現ライブ設定 (B+E込み)", **CUR),
+    _live("F: 変動連動ストップ", **CUR, vol_stop=True),
+    _live("G: spread12bp", **CUR, max_spread_bps=12.0),
+    _live("G2: spread15bp", **CUR, max_spread_bps=15.0),
+    _live("H: 量1.5倍+spread12", **CUR, max_spread_bps=12.0, surge_ratio=1.5),
     _live("参考: B/Eなし"),
     _live("+A 3秒連続確認", confirm_ticks=3),
     _live("+B 値幅0.3%下限", min_range_pct=0.3),
