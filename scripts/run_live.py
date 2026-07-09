@@ -168,6 +168,7 @@ def main() -> None:
             entry_windows=entry_windows,
             loss_cooldown_sec=float(cfg.signals.get("loss_cooldown_sec", 0)),
             explore_strategy=explore_strategy,
+            price_shock_bps=float(cfg.risk.get("price_shock_bps", 300)),
             explore_daily_loss_cap=float((exp_cfg.get("daily_loss_cap", 5000)
                                           if exp_cfg is not None else 5000)),
         )

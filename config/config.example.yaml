@@ -77,6 +77,7 @@ risk:
   max_total_exposure: 2500000  # 建玉総額の上限 (信用余力の範囲内)
   daily_loss_limit: 0.02    # 日次損失がこの比率に達したら当日停止
   max_consecutive_losses: 4
+  price_shock_bps: 300      # 急変警報の入場ブロック閾値 (2分でこのbps超のみ。データ異常は別途3%ガードが担当)
   regime_index: "^N225"     # 地合い判定に使う指数
 
 engine:

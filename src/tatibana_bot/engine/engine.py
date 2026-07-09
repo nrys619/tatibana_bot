@@ -61,6 +61,7 @@ class LiveEngine:
         explore_strategy=None,
         explore_max_price: float = 3000.0,
         explore_daily_loss_cap: float = 5000.0,
+        price_shock_bps: float = 300.0,
     ):
         self._md = market_data
         self._executor = executor
@@ -92,7 +93,7 @@ class LiveEngine:
         self._last_px: dict[str, tuple[float, int]] = {}  # code -> (価格, 異常連続数)
 
         self._tapes: dict[str, TapeReader] = {c: TapeReader() for c in self._watch}
-        self._anomaly = AnomalyDetector()
+        self._anomaly = AnomalyDetector(price_shock_bps=price_shock_bps)
         self._positions: dict[str, tuple[Position, int]] = {}  # code -> (pos, trade_id)
 
     # ------------------------------------------------------------------
