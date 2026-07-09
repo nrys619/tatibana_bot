@@ -109,6 +109,28 @@ def main() -> None:
         ]
         logger.info("entry windows: %s", raw_windows)
 
+    # 探索モード (緩い条件の試し玉)
+    explore_strategy = None
+    exp_cfg = cfg.signals.get("explore")
+    if exp_cfg is not None and exp_cfg.get("enabled", False):
+        explore_strategy = MicroStrategy(
+            StrategyParams(
+                imbalance_entry=float(exp_cfg.get("imbalance_entry", 0.35)),
+                tape_ratio_entry=cfg.signals.tape_ratio_entry,
+                max_spread_bps=cfg.signals.max_spread_bps,
+                target_pct=cfg.signals.target_pct,
+                stop_pct=cfg.signals.stop_pct,
+                trend_filter=True,
+                volume_surge=True,
+                surge_ratio=float(exp_cfg.get("surge_ratio", 1.2)),
+                min_range_pct=float(cfg.signals.get("min_range_pct", 0.0)),
+            ),
+            ml_scorer=scorer,
+        )
+        logger.info("explore mode: enabled (imb>=%.2f surge>=%.1fx, min size)",
+                    float(exp_cfg.get("imbalance_entry", 0.35)),
+                    float(exp_cfg.get("surge_ratio", 1.2)))
+
     session = create_session(cfg)
 
     with session:
@@ -145,6 +167,9 @@ def main() -> None:
             max_total_exposure=cfg.risk.get("max_total_exposure"),
             entry_windows=entry_windows,
             loss_cooldown_sec=float(cfg.signals.get("loss_cooldown_sec", 0)),
+            explore_strategy=explore_strategy,
+            explore_daily_loss_cap=float((exp_cfg.get("daily_loss_cap", 5000)
+                                          if exp_cfg is not None else 5000)),
         )
         engine.run()
 

@@ -58,6 +58,9 @@ class LiveEngine:
         max_total_exposure: float | None = None,
         entry_windows: list[tuple[dtime, dtime]] | None = None,
         loss_cooldown_sec: float = 0.0,
+        explore_strategy=None,
+        explore_max_price: float = 3000.0,
+        explore_daily_loss_cap: float = 5000.0,
     ):
         self._md = market_data
         self._executor = executor
@@ -79,6 +82,13 @@ class LiveEngine:
         self._entry_windows = entry_windows
         self._loss_cooldown = loss_cooldown_sec
         self._code_cooldown: dict[str, datetime] = {}  # E: 負けた銘柄の出禁期限
+        # 探索モード: 緩い条件の「試し玉」(最小サイズ・専用損失上限)
+        self._explore = explore_strategy
+        if self._explore is not None:
+            self._explore._stats = self._strategy._stats  # 観測を共有
+        self._explore_max_price = explore_max_price
+        self._explore_loss_cap = explore_daily_loss_cap
+        self._explore_pnl_today = 0.0
         self._last_px: dict[str, tuple[float, int]] = {}  # code -> (価格, 異常連続数)
 
         self._tapes: dict[str, TapeReader] = {c: TapeReader() for c in self._watch}
@@ -205,6 +215,8 @@ class LiveEngine:
                 pnl = self._executor.close_position(position, price, reason)
                 self._log.close_trade(trade_id, now, price, pnl, reason)
                 del self._positions[code]
+                if position.tag == "explore":
+                    self._explore_pnl_today += pnl
                 if pnl < 0 and self._loss_cooldown > 0:  # E: 負けた土俵で取り返さない
                     from datetime import timedelta
                     self._code_cooldown[code] = now + timedelta(seconds=self._loss_cooldown)
@@ -222,11 +234,21 @@ class LiveEngine:
             return
         today = now.strftime("%Y-%m-%d")
         if not self._limits.check(
-            self._log.today_realized_pnl(today), self._log.recent_results(10)
+            self._log.today_realized_pnl(today),
+            self._log.recent_results(10, day=today),  # 連敗は当日分だけ数える
         ):
             return
 
         signal = self._strategy.evaluate(board, tape_feats, ts=now)
+        explore = False
+        if signal is None and self._explore is not None:
+            price_now = board.last_price or board.mid
+            if (price_now is not None and price_now <= self._explore_max_price
+                    and self._explore_pnl_today > -self._explore_loss_cap):
+                signal = self._explore.evaluate(board, tape_feats, ts=now)
+                if signal is not None:
+                    explore = True
+                    signal.reason = "explore | " + signal.reason
         if signal is None:
             return
 
@@ -241,7 +263,11 @@ class LiveEngine:
                                  signal.reason + " | blocked by bullish disclosure", acted=False)
             return
 
-        quantity = position_size(signal, self._sizing, self._regime_mult)
+        if explore:
+            from tatibana_bot.risk.sizing import UNIT_SHARES
+            quantity = UNIT_SHARES  # 試し玉は最小単位固定
+        else:
+            quantity = position_size(signal, self._sizing, self._regime_mult)
         if quantity > 0 and self._max_exposure is not None:
             exposure = sum(p.entry_price * p.quantity for p, _ in self._positions.values())
             if exposure + quantity * signal.entry_price > self._max_exposure:
@@ -262,6 +288,8 @@ class LiveEngine:
 
         position = self._executor.open_position(
             signal, quantity, self._max_hold_sec, limit_price=limit_px)
+        if position is not None and explore:
+            position.tag = "explore"
         if position is None:  # 指値が約定しなかった (取り逃しはゼロ円)
             self._log.log_signal(now, code, signal.side.value, signal.confidence,
                                  signal.reason + " | limit not filled", acted=False)

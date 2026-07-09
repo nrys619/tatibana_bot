@@ -89,12 +89,19 @@ class TradeLog:
         )
         return float(cur.fetchone()[0])
 
-    def recent_results(self, n: int) -> list[float]:
-        """直近 n 件の決済済みトレード損益 (新しい順)."""
-        cur = self._conn.execute(
-            "SELECT pnl FROM trades WHERE pnl IS NOT NULL ORDER BY id DESC LIMIT ?",
-            (n,),
-        )
+    def recent_results(self, n: int, day: str | None = None) -> list[float]:
+        """直近 n 件の決済済みトレード損益 (新しい順)。day指定でその日の分だけ."""
+        if day:
+            cur = self._conn.execute(
+                "SELECT pnl FROM trades WHERE pnl IS NOT NULL"
+                " AND substr(exit_ts, 1, 10) = ? ORDER BY id DESC LIMIT ?",
+                (day, n),
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT pnl FROM trades WHERE pnl IS NOT NULL ORDER BY id DESC LIMIT ?",
+                (n,),
+            )
         return [float(row[0]) for row in cur.fetchall()]
 
     def log_signal(
