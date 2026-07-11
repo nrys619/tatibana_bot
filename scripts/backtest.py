@@ -48,6 +48,7 @@ class Variant:
     skip_open_min: int = 0          # D: 寄りからこの分数は見送り
     loss_cooldown_sec: float = 0.0  # E: その銘柄で負けたらこの秒数出禁 (0=通常60s)
     vol_stop: bool = False          # F: 損切り/トレール幅を直近5分の変動幅に連動させる
+    ml_veto: float = 0.0            # ML: 方向確率がこの値未満なら見送り (0=無効)
 
 
 @dataclass
@@ -91,6 +92,16 @@ def _load_day(path: Path) -> dict[str, list[dict]]:
 def _epoch(ts: str) -> float:
     from datetime import datetime
     return datetime.fromisoformat(ts).timestamp()
+
+
+_SCORER = None
+
+def _get_scorer():
+    global _SCORER
+    if _SCORER is None:
+        from tatibana_bot.signals.model import load_scorer
+        _SCORER = load_scorer("/tmp/intraday_candidate.txt") or (lambda f: 0.5)
+    return _SCORER
 
 
 def run_variant(v: Variant, per_code: dict[str, list[dict]]) -> dict:
@@ -190,6 +201,11 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]]) -> dict:
                 streak_side, streak_n = None, 0
                 continue
             side = "buy" if long_ok else "sell"
+            if v.ml_veto > 0:  # ML: 30秒後の方向予測でふるいにかける
+                prob = float(_get_scorer()(r))
+                side_prob = prob if side == "buy" else 1.0 - prob
+                if side_prob < v.ml_veto:
+                    continue
             if v.confirm_ticks > 0:
                 if side == streak_side:
                     streak_n += 1
@@ -265,6 +281,11 @@ CUR = dict(min_range_pct=0.3, loss_cooldown_sec=1800)
 VARIANTS = [
     _live("★現ライブ設定 (B+E込み)", **CUR),
     _live("F: 変動連動ストップ", **CUR, vol_stop=True),
+    _live("★+ML0.50", **CUR, ml_veto=0.50),
+    _live("★+ML0.55", **CUR, ml_veto=0.55),
+    _live("★+ML0.60", **CUR, ml_veto=0.60),
+    _live("探索級+ML0.55", **CUR, imbalance=0.35, surge_ratio=1.2, ml_veto=0.55),
+    _live("探索級+ML0.60", **CUR, imbalance=0.35, surge_ratio=1.2, ml_veto=0.60),
     _live("G: spread12bp", **CUR, max_spread_bps=12.0),
     _live("G2: spread15bp", **CUR, max_spread_bps=15.0),
     _live("H: 量1.5倍+spread12", **CUR, max_spread_bps=12.0, surge_ratio=1.5),

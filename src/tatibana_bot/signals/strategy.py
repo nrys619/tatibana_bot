@@ -150,10 +150,12 @@ class MicroStrategy:
         confidence = min(0.5 + 0.25 * strength, 0.9)
 
         # MLモデルがあれば確信度を混ぜる (モデルが弱気なら落とす)
+        # モデルは「上がる確率」を返すので、売りシグナルでは反転させて使う
         if self._ml is not None:
             ml_prob = float(self._ml({**ob, **tape_feats}))
-            confidence = 0.5 * confidence + 0.5 * ml_prob
-            if ml_prob < 0.5:
+            side_prob = ml_prob if side == Side.BUY else 1.0 - ml_prob
+            confidence = 0.5 * confidence + 0.5 * side_prob
+            if side_prob < 0.5:
                 return None
 
         sign = 1 if side == Side.BUY else -1
