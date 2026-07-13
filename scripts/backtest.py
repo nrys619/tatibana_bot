@@ -281,6 +281,8 @@ CUR = dict(min_range_pct=0.3, loss_cooldown_sec=1800)
 VARIANTS = [
     _live("★現ライブ設定 (B+E込み)", **CUR),
     _live("F: 変動連動ストップ", **CUR, vol_stop=True),
+    _live("★+吸収復活", **CUR, absorption=True),
+    _live("★+吸収+トレール.4", **CUR, absorption=True, trailing_pct=0.4),
     _live("★+ML0.50", **CUR, ml_veto=0.50),
     _live("★+ML0.55", **CUR, ml_veto=0.55),
     _live("★+ML0.60", **CUR, ml_veto=0.60),
