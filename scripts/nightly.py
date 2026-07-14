@@ -66,13 +66,18 @@ def main() -> None:
     # 予算フィルタ: 1単元(100株)が建玉上限に収まる銘柄だけを対象にする
     max_price = cfg.risk.max_position_value / UNIT_SHARES
     record_extra = int(cfg.screening.get("record_extra", 0))
-    items = rank_universe(bars, model_path,
-                          top_n=cfg.screening.top_n + record_extra,
-                          min_turnover_jpy=cfg.screening.min_turnover_jpy,
-                          max_price_jpy=max_price)
-    watch_items = items[:cfg.screening.top_n]
-    record_items = items[cfg.screening.top_n:]
+    watch_items = rank_universe(bars, model_path, top_n=cfg.screening.top_n,
+                                min_turnover_jpy=cfg.screening.min_turnover_jpy,
+                                max_price_jpy=max_price)
     save_watchlist(watch_items, cfg.paths.watchlist)
+    # 記録専用は取引しないため予算フィルタ(株価上限)を掛けずに選ぶ
+    record_items = []
+    if record_extra:
+        pool = rank_universe(bars, model_path, top_n=999,
+                             min_turnover_jpy=cfg.screening.min_turnover_jpy,
+                             max_price_jpy=None)
+        watch_set = {w.code for w in watch_items}
+        record_items = [w for w in pool if w.code not in watch_set][:record_extra]
     import json as _json
     with open(Path(cfg.paths.data_dir) / "recordlist.json", "w") as f:
         _json.dump([w.code for w in record_items], f)

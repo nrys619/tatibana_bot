@@ -172,10 +172,11 @@ class LiveEngine:
             return
 
         for code, board in boards.items():
-            if code in self._record_tapes:
-                self._record_only(code, board, now)
-            elif code in self._watch:
+            # 場中スキャンで控え銘柄が監視に昇格することがあるため監視判定を優先
+            if code in self._watch:
                 self._process_board(code, board, now)
+            elif code in self._record_tapes:
+                self._record_only(code, board, now)
 
     def _record_only(self, code: str, board: Board, now: datetime) -> None:
         """記録専用銘柄: 取引せず、ML学習用のスナップショットだけ残す."""

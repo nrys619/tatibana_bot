@@ -32,7 +32,7 @@ universe:
     #                trading_value, trading_value_surge, rise, fall, interval_rise, interval_fall
     rankings: ["day_trading_afternoon", "tick", "volume_surge", "trading_value"]
     market: 0     # 0=全体 1=プライム 2=スタンダード 3=グロース
-    top_k: 20     # 各ランキングの上位何銘柄を候補に入れるか
+    top_k: 50     # 各ランキングの上位何銘柄を候補に入れるか
 
 screening:
   top_n: 30                # 監視リストに載せる銘柄数
