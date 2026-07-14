@@ -35,8 +35,9 @@ universe:
     top_k: 20     # 各ランキングの上位何銘柄を候補に入れるか
 
 screening:
-  top_n: 10                # 監視リストに載せる銘柄数
+  top_n: 30                # 監視リストに載せる銘柄数
   min_turnover_jpy: 1.0e+9  # 最低売買代金 (流動性フィルタ)
+  record_extra: 20          # 監視の次点20銘柄は「記録専用」(取引せずML用に録画)
   label_range_pct: 3.0     # 「翌日この値幅%以上動いたらデイトレ向き」のラベル閾値
   history_days: 750
 

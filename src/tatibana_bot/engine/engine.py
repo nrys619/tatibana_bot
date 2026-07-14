@@ -62,6 +62,7 @@ class LiveEngine:
         explore_max_price: float = 3000.0,
         explore_daily_loss_cap: float = 5000.0,
         price_shock_bps: float = 300.0,
+        record_codes: list[str] | None = None,
     ):
         self._md = market_data
         self._executor = executor
@@ -93,6 +94,9 @@ class LiveEngine:
         self._last_px: dict[str, tuple[float, int]] = {}  # code -> (価格, 異常連続数)
 
         self._tapes: dict[str, TapeReader] = {c: TapeReader() for c in self._watch}
+        # 記録専用銘柄 (取引はしない、ML学習用の録画だけ)
+        self._record_codes = [c for c in (record_codes or []) if c not in self._watch]
+        self._record_tapes: dict[str, TapeReader] = {c: TapeReader() for c in self._record_codes}
         self._anomaly = AnomalyDetector(price_shock_bps=price_shock_bps)
         self._positions: dict[str, tuple[Position, int]] = {}  # code -> (pos, trade_id)
 
@@ -161,14 +165,30 @@ class LiveEngine:
 
     def _tick(self, codes: list[str], now: datetime) -> None:
         try:
-            boards = self._md.get_boards(codes)
+            boards = self._md.get_boards(codes + self._record_codes)
         except Exception as e:
             # デモサーバーは高頻度で接続を切るため、全文トレースはログを圧迫する
             logger.warning("board fetch failed: %s", str(e)[:120])
             return
 
         for code, board in boards.items():
-            self._process_board(code, board, now)
+            if code in self._record_tapes:
+                self._record_only(code, board, now)
+            elif code in self._watch:
+                self._process_board(code, board, now)
+
+    def _record_only(self, code: str, board: Board, now: datetime) -> None:
+        """記録専用銘柄: 取引せず、ML学習用のスナップショットだけ残す."""
+        if self._recorder is None:
+            return
+        tape = self._record_tapes[code]
+        tape.infer_ticks(board)
+        price = board.last_price or board.mid
+        if price is not None:
+            self._recorder.record(
+                code, now,
+                {**board_features(board), **tape.features(), "last_price": price},
+            )
 
     def _process_board(self, code: str, board: Board, now: datetime) -> None:
         tape = self._tapes[code]

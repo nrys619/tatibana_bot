@@ -39,6 +39,12 @@ def main() -> None:
     mode = args.mode or cfg.engine.mode
 
     watchlist = load_watchlist(cfg.paths.watchlist)
+    record_codes = []
+    _rl = Path(cfg.paths.data_dir) / "recordlist.json"
+    if _rl.exists():
+        import json as _json
+        record_codes = _json.loads(_rl.read_text())
+        logger.info("record-only codes: %d銘柄", len(record_codes))
     if not watchlist:
         raise SystemExit("watchlist is empty — run scripts/nightly.py first")
 
@@ -169,6 +175,7 @@ def main() -> None:
             loss_cooldown_sec=float(cfg.signals.get("loss_cooldown_sec", 0)),
             explore_strategy=explore_strategy,
             price_shock_bps=float(cfg.risk.get("price_shock_bps", 300)),
+            record_codes=record_codes,
             explore_daily_loss_cap=float((exp_cfg.get("daily_loss_cap", 5000)
                                           if exp_cfg is not None else 5000)),
         )

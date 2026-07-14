@@ -62,14 +62,22 @@ def main() -> None:
         metrics = train_model(table, model_path)
         logger.info("training metrics: %s", metrics)
 
-    # 4. ランキング -> 監視リスト保存
+    # 4. ランキング -> 監視リスト30 + 記録専用20 を保存
     # 予算フィルタ: 1単元(100株)が建玉上限に収まる銘柄だけを対象にする
     max_price = cfg.risk.max_position_value / UNIT_SHARES
-    items = rank_universe(bars, model_path, top_n=cfg.screening.top_n,
+    record_extra = int(cfg.screening.get("record_extra", 0))
+    items = rank_universe(bars, model_path,
+                          top_n=cfg.screening.top_n + record_extra,
                           min_turnover_jpy=cfg.screening.min_turnover_jpy,
                           max_price_jpy=max_price)
-    save_watchlist(items, cfg.paths.watchlist)
-    logger.info("watchlist saved to %s: %s", cfg.paths.watchlist, [w.code for w in items])
+    watch_items = items[:cfg.screening.top_n]
+    record_items = items[cfg.screening.top_n:]
+    save_watchlist(watch_items, cfg.paths.watchlist)
+    import json as _json
+    with open(Path(cfg.paths.data_dir) / "recordlist.json", "w") as f:
+        _json.dump([w.code for w in record_items], f)
+    logger.info("watchlist saved: %s", [w.code for w in watch_items])
+    logger.info("record-only list saved: %s", [w.code for w in record_items])
 
 
 if __name__ == "__main__":
