@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import argparse
 import logging
+import time
 from datetime import date, timedelta
+
+import requests
 
 from tatibana_bot.config import load_config
 from tatibana_bot.disclosure.analyzer import DisclosureAnalyzer
@@ -43,7 +46,16 @@ def main() -> None:
     universe = set(cfg.universe.codes)
 
     # その日の開示は全件取ってから絞る (limitを小さくすると監視銘柄の開示を見逃す)
-    disclosures = fetch_disclosures(target_day, limit=3000)
+    # Macのスリープ復帰直後はWi-Fi接続前でDNS解決に失敗することがあるため、数分は再試行する
+    for attempt in range(5):
+        try:
+            disclosures = fetch_disclosures(target_day, limit=3000)
+            break
+        except (requests.exceptions.ConnectionError, OSError):
+            if attempt == 4:
+                raise
+            logger.warning("ネットワーク未接続の可能性 — 60秒後に再試行 (%d/4)", attempt + 1)
+            time.sleep(60)
     # ユニバース内の開示だけをLLMにかける (コスト管理)
     relevant = [d for d in disclosures if d.code in universe | watch_codes]
     if len(relevant) > cfg.disclosure.max_docs_per_run:
