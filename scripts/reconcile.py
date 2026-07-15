@@ -79,7 +79,19 @@ def main() -> None:
     actual = conn.execute(
         "SELECT COUNT(*) FROM signals WHERE ts LIKE ?", (day_iso + "%",)
     ).fetchone()[0]
+    acted_codes = {r[0] for r in conn.execute(
+        "SELECT DISTINCT code FROM signals WHERE ts LIKE ?", (day_iso + "%",))}
     conn.close()
+
+    # 記録専用銘柄は取引しないので「出るはずだった合図」から除外する
+    # (ただし場中スキャンで監視に昇格した=実機の判断が残っている銘柄は数える)
+    rl_path = Path("data/recordlist.json")
+    if rl_path.exists():
+        record_only = set(json.loads(rl_path.read_text())) - acted_codes
+        skipped = [h for h in hits if h[1] in record_only]
+        hits = [h for h in hits if h[1] not in record_only]
+        if skipped:
+            print(f"(記録専用銘柄の合図 {len(skipped)}回は取引対象外のため除外)")
 
     print(f"=== 実機とシミュの突き合わせ ({day_iso}) ===")
     print(f"出るはずだった合図(探索基準・重複除去): {len(hits)}回")
