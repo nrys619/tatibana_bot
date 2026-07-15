@@ -13,7 +13,10 @@ BOARD_COLUMNS を調整すること。
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime
+
+import requests
 
 from tatibana_bot.api.session import TachibanaSession
 from tatibana_bot.models import Board, BoardLevel
@@ -46,12 +49,24 @@ class MarketDataClient:
         self._session = session
 
     def get_boards(self, codes: list[str]) -> dict[str, Board]:
-        """複数銘柄の板スナップショットを取得."""
-        data = self._session.price(
-            "CLMMfdsGetMarketPrice",
-            sTargetIssueCode=",".join(codes),
-            sTargetColumn=",".join(BOARD_COLUMNS),
-        )
+        """複数銘柄の板スナップショットを取得.
+
+        デモサーバーは大きめのリクエストを無応答で切ることがあるため、
+        接続系の失敗は0.3秒おいて1回だけ再試行する。
+        """
+        try:
+            data = self._session.price(
+                "CLMMfdsGetMarketPrice",
+                sTargetIssueCode=",".join(codes),
+                sTargetColumn=",".join(BOARD_COLUMNS),
+            )
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            time.sleep(0.3)
+            data = self._session.price(
+                "CLMMfdsGetMarketPrice",
+                sTargetIssueCode=",".join(codes),
+                sTargetColumn=",".join(BOARD_COLUMNS),
+            )
         now = datetime.now()
         boards: dict[str, Board] = {}
         rows = data.get("aCLMMfdsMarketPrice", [])
