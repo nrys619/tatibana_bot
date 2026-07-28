@@ -49,6 +49,7 @@ class Variant:
     loss_cooldown_sec: float = 0.0  # E: その銘柄で負けたらこの秒数出禁 (0=通常60s)
     vol_stop: bool = False          # F: 損切り/トレール幅を直近5分の変動幅に連動させる
     ml_veto: float = 0.0            # ML: 方向確率がこの値未満なら見送り (0=無効)
+    side_filter: str = ""           # G: "sell"=売りのみ / "buy"=買いのみ ("" = 両方)
 
 
 @dataclass
@@ -201,6 +202,8 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]]) -> dict:
                 streak_side, streak_n = None, 0
                 continue
             side = "buy" if long_ok else "sell"
+            if v.side_filter and side != v.side_filter:
+                continue
             if v.ml_veto > 0:  # ML: 30秒後の方向予測でふるいにかける
                 prob = float(_get_scorer()(r))
                 side_prob = prob if side == "buy" else 1.0 - prob
@@ -280,6 +283,15 @@ CUR = dict(min_range_pct=0.3, loss_cooldown_sec=1800)
 
 VARIANTS = [
     _live("★現ライブ設定 (B+E込み)", **CUR),
+    # --- 実機163取引の分析から立てた仮説 (2026-07-28) ---
+    # J: 買いが全期間で大負け(-15,870円)、売りは黒字(+9,120円)
+    _live("J1: 売りのみ", **CUR, side_filter="sell"),
+    _live("J2: 買いのみ", **CUR, side_filter="buy"),
+    # K: ストップ決済が16戦全敗 -20,420円。トレールに任せて損切りを浅くする
+    _live("K1: ストップ0.25%", **CUR, stop_pct=0.25),
+    _live("K2: ストップ0.2%", **CUR, stop_pct=0.2),
+    _live("K3: ストップ0.3%+トレール0.25", **CUR, stop_pct=0.3, trailing_pct=0.25),
+    _live("K4: 売りのみ+ストップ0.25", **CUR, side_filter="sell", stop_pct=0.25),
     _live("F: 変動連動ストップ", **CUR, vol_stop=True),
     _live("★+吸収復活", **CUR, absorption=True),
     _live("★+吸収+トレール.4", **CUR, absorption=True, trailing_pct=0.4),

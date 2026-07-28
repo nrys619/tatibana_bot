@@ -9,6 +9,8 @@ yfinance (Yahoo Finance) から日足を取得し、data_dir/daily/{code}.parque
 from __future__ import annotations
 
 import logging
+import os
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -61,6 +63,31 @@ def _fetch(code: str, days: int) -> pd.DataFrame | None:
     return _normalize(df)
 
 
+def _write_cache(df: pd.DataFrame, path: Path, attempts: int = 3) -> None:
+    """parquet を一時ファイル経由で書く。
+
+    Desktop は iCloud 同期下にあり、同期中のファイルへの open が
+    OSError(EDEADLK) を返すことがある。一時ファイルに書いてから差し替え、
+    失敗しても短い間隔で数回やり直す。
+    """
+    tmp = path.with_suffix(".parquet.tmp")
+    for i in range(attempts):
+        try:
+            df.to_parquet(tmp)
+            os.replace(tmp, path)
+            return
+        except OSError:
+            if i == attempts - 1:
+                raise
+            time.sleep(1.0 * (i + 1))
+        finally:
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+
+
 def update_universe(
     codes: list[str], data_dir: str | Path, days: int = 750
 ) -> dict[str, pd.DataFrame]:
@@ -69,18 +96,28 @@ def update_universe(
     取得に失敗した銘柄は、キャッシュがあればそれで代用し、なければ結果から外す。
     """
     bars: dict[str, pd.DataFrame] = {}
+    failed: list[str] = []
     for code in codes:
-        df = _fetch(code, days)
-        path = _cache_path(data_dir, code)
-        if df is not None:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            df.to_parquet(path)
-        elif path.exists():
-            logger.warning("using stale cache for %s", code)
-            df = pd.read_parquet(path)
-        else:
+        try:
+            df = _fetch(code, days)
+            path = _cache_path(data_dir, code)
+            if df is not None:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                _write_cache(df, path)
+            elif path.exists():
+                logger.warning("using stale cache for %s", code)
+                df = pd.read_parquet(path)
+            else:
+                continue
+        except Exception:
+            # 1銘柄の失敗で夜間バッチ全体を落とさない (iCloud同期由来の
+            # 一時的な OSError で3夜連続、銘柄選定ごと停止した実績あり)
+            logger.warning("daily update failed for %s — skipping", code, exc_info=True)
+            failed.append(code)
             continue
         bars[code] = df
+    if failed:
+        logger.warning("daily update skipped %d codes: %s", len(failed), failed)
     logger.info("daily bars updated: %d/%d codes", len(bars), len(codes))
     return bars
 
