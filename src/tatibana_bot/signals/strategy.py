@@ -38,6 +38,7 @@ class StrategyParams:
     window_sec: float = 300.0
     min_history: int = 60
     min_range_pct: float = 0.0  # B: 直近5分の値幅がこの%未満の銘柄は見送り
+    allow_buy: bool = True      # J: 下げ相場では買いエントリーを止める
 
 
 @dataclass
@@ -108,6 +109,8 @@ class MicroStrategy:
             return None
 
         side = Side.BUY if long_setup else Side.SELL
+        if side == Side.BUY and not self._p.allow_buy:
+            return None
 
         # --- 有名トレーダー由来のフィルタ群 ---
         if any((self._p.trend_filter, self._p.volume_surge,

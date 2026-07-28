@@ -50,6 +50,7 @@ def main() -> None:
 
     # 地合い判定 (取得済みの指数日足を使用)
     regime_mult = 1.0
+    allow_buy = True
     index_bars = load_universe([cfg.risk.regime_index], cfg.paths.data_dir)
     index_df = index_bars.get(cfg.risk.regime_index)
     if index_df is not None:
@@ -58,6 +59,13 @@ def main() -> None:
         logger.info("regime=%s vol=%.2f trend=%.2f%% -> risk x%.2f",
                     state.regime.value, state.realized_vol,
                     state.trend_strength, regime_mult)
+        # J: 実機163取引で買いは全期間-15,870円/売りは+9,120円。
+        # 地合いが下向き(MA5<MA20)の日は買いエントリーを止める。
+        # 上げ相場に転じれば自動で買いが復活する。
+        if cfg.signals.get("skip_buy_when_market_falling", False):
+            allow_buy = state.trend_strength >= 0
+            if not allow_buy:
+                logger.info("下げ相場のため今日は買いエントリーを停止 (売りのみ)")
     else:
         logger.warning("no regime index data — using multiplier 1.0")
 
@@ -77,6 +85,7 @@ def main() -> None:
             absorption=cfg.signals.get("absorption", False),
             breakout_only=cfg.signals.get("breakout_only", False),
             min_range_pct=float(cfg.signals.get("min_range_pct", 0.0)),
+            allow_buy=allow_buy,
         ),
         ml_scorer=scorer,
     )
@@ -130,6 +139,7 @@ def main() -> None:
                 volume_surge=True,
                 surge_ratio=float(exp_cfg.get("surge_ratio", 1.2)),
                 min_range_pct=float(cfg.signals.get("min_range_pct", 0.0)),
+                allow_buy=allow_buy,
             ),
             ml_scorer=scorer,
         )
