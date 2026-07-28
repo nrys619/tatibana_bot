@@ -14,11 +14,21 @@ from __future__ import annotations
 import json
 import sys
 from collections import deque
+from math import isfinite
 from dataclasses import dataclass, field
 from pathlib import Path
 
 _HOLD_SECS: list[float] = []
 UNIT = 100          # 1単元
+MAX_COST_BPS = 50.0  # 板の片側が空だと spread_bps=inf で記録される。コストはここで頭打ちにする
+
+
+def _spread_bps(r: dict) -> float:
+    """記録されたスプレッド。異常値(inf/NaN/負)は上限値に丸める."""
+    sp = r.get("spread_bps", 5.0)
+    if sp is None or not isfinite(sp) or sp < 0:
+        return MAX_COST_BPS
+    return min(sp, MAX_COST_BPS)
 
 
 def _live_qty(v: "Variant", side: str, px: float, imb: float, br: float) -> int:
@@ -87,10 +97,16 @@ class Variant:
     equity_jpy: float = 2_000_000
     max_position_value: float = 1_500_000
     regime_mult: float = 1.0         # 地合いによるサイズ倍率 (実機ログから取る)
+    anomaly: bool = False            # 実機の異常検知 (板の急減/急変動なら逃げる・入らない)
+    anomaly_window_sec: float = 120.0
+    depth_drop_ratio: float = 0.3
+    price_shock_bps: float = 300.0
+    spread_blowout_bps: float = 50.0
 
 
 @dataclass
 class CodeState:
+    anom: deque = field(default_factory=lambda: deque())  # (t, total_depth, price)
     hist: deque = field(default_factory=lambda: deque())  # (t, price, ask_depth, bid_depth, ticks)
     session_high: float = 0.0
     session_low: float = 1e18
@@ -168,6 +184,24 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]],
             while st.hist and t - st.hist[0][0] > 300:
                 st.hist.popleft()
 
+            # --- 異常検知 (実機の AnomalyDetector と同じ条件) ---
+            anom_hit = False
+            if v.anomaly:
+                depth = r.get("bid_depth", 0.0) + r.get("ask_depth", 0.0)
+                sp = r.get("spread_bps", 0.0)
+                if sp and sp != float("inf") and sp >= v.spread_blowout_bps:
+                    anom_hit = True
+                while st.anom and t - st.anom[0][0] > v.anomaly_window_sec:
+                    st.anom.popleft()
+                if st.anom:
+                    avg_depth = sum(h[1] for h in st.anom) / len(st.anom)
+                    if avg_depth > 0 and depth < avg_depth * v.depth_drop_ratio:
+                        anom_hit = True
+                    old_px = st.anom[0][2]
+                    if old_px and abs(px - old_px) / old_px * 10000 >= v.price_shock_bps:
+                        anom_hit = True
+                st.anom.append((t, depth, px))
+
             # --- 5分前の状態 ---
             oldest = st.hist[0]
             px_5m, ask_5m, bid_5m = oldest[1], oldest[2], oldest[3]
@@ -207,10 +241,12 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]],
                     if px >= stop: exit_reason = "stop"
                     elif px <= target: exit_reason = "target"
                     elif v.momentum_exit and mom_up and t - et > 60: exit_reason = "mom"
+                if exit_reason is None and anom_hit:
+                    exit_reason = "anomaly"
                 if exit_reason is None and t - et >= MAX_HOLD_S:
                     exit_reason = "time"
                 if exit_reason:
-                    cost = px * (r.get("spread_bps", 5) / 2 + SLIP_BP) / 10000
+                    cost = px * (_spread_bps(r) / 2 + SLIP_BP) / 10000
                     fill = px - cost if side == "buy" else px + cost
                     q = pos_qty
                     pnl = (fill - epx) * q if side == "buy" else (epx - fill) * q
@@ -225,6 +261,8 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]],
                 continue
 
             # --- エントリー判定 ---
+            if anom_hit:
+                continue
             if t < cooldown_until or len(st.hist) < 60:
                 continue
             if v.respect_watchlist and timeline is not None and day is not None:
@@ -300,7 +338,7 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]],
             if v.maker_entry and v.fill_timeout_sec > 0:
                 # 実機は best bid/ask に指値を置き、待っても刺さらなければ取り消す。
                 # 待ち時間内に価格がその指値に届いたときだけ約定とみなす。
-                half = px * r.get("spread_bps", 5) / 2 / 10000
+                half = px * _spread_bps(r) / 2 / 10000
                 limit = px - half if side == "buy" else px + half
                 filled = False
                 for fr in rows[i + 1:]:
@@ -318,7 +356,7 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]],
             elif v.maker_entry:
                 epx = px  # ①指値: コストゼロで約定と仮定 (取り逃しは考慮しない楽観値)
             else:
-                cost = px * (r.get("spread_bps", 5) / 2 + SLIP_BP) / 10000
+                cost = px * (_spread_bps(r) / 2 + SLIP_BP) / 10000
                 epx = px + cost if side == "buy" else px - cost
             sign = 1 if side == "buy" else -1
             stop_pct, tgt_pct = v.stop_pct, v.target_pct

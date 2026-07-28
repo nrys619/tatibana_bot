@@ -30,7 +30,8 @@ LIVE_FAITHFUL = dict(
     min_range_pct=0.3, loss_cooldown_sec=0,
     explore=True, explore_imbalance=0.35, explore_surge=1.2, explore_max_price=3000.0,
     respect_watchlist=True,
-    live_sizing=True, regime_mult=0.30,   # 実機ログ上、7/9〜7/28は全日 x0.30
+    live_sizing=True, regime_mult=0.30,  # 実機ログ上7/9〜7/28は全日x0.30
+    anomaly=True, price_shock_bps=300.0,  # 実機configと同じ
     # fill_timeout_sec=15.0 は不採用。「待ち時間内に価格が指値に届いたら約定」という
     # モデルは、買い指値が下落時にしか刺さらない = 不利な入り方だけを選ぶ偏りを生み、
     # 相関が +0.11 -> -0.22 に悪化した。実際の指値は板の順番待ちで、価格が下がらなくても
@@ -44,6 +45,8 @@ SCORE_LOG = """
 2026-07-28  -0.22  上記 + 指値約定モデル → 悪化したので不採用
 2026-07-28  +0.27  探索+監視リスト+実機と同じ建玉サイズ計算 (高すぎる株の見送りを再現)
 2026-07-28  +0.29  上記 + 監視ログが無い日を採点から除外 (13日で採点)
+2026-07-28  +0.51  上記 + 実機の異常検知(板の急減/急変動)を移植、スプレッドinfバグ修正
+                   方向一致 10/13日(77%)、取引数の比 1.01倍まで一致
 """
 
 
