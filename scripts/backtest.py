@@ -17,7 +17,33 @@ from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
+_HOLD_SECS: list[float] = []
 UNIT = 100          # 1単元
+
+
+def _live_qty(v: "Variant", side: str, px: float, imb: float, br: float) -> int:
+    """実機と同じ発注株数を返す。0なら見送り。
+
+    実機のコード (tatibana_bot.risk.sizing.position_size) をそのまま呼ぶ。
+    書き写すとズレるため、意図的に import して使う。
+    """
+    from datetime import datetime
+
+    from tatibana_bot.models import Side, Signal
+    from tatibana_bot.risk.sizing import SizingParams, position_size
+
+    strength = min(abs(imb) / max(v.imbalance, 1e-9),
+                   abs(br - 0.5) / max(v.tape_ratio - 0.5, 1e-9))
+    conf = min(0.5 + 0.25 * strength, 0.9)
+    sign = 1 if side == "buy" else -1
+    sg = Signal(ts=datetime(2000, 1, 1), code="x",
+                side=Side.BUY if side == "buy" else Side.SELL,
+                confidence=conf, reason="", entry_price=px,
+                stop_price=px * (1 - sign * v.stop_pct / 100),
+                target_price=px * (1 + sign * v.target_pct / 100))
+    return position_size(
+        sg, SizingParams(equity_jpy=v.equity_jpy,
+                         max_position_value=v.max_position_value), v.regime_mult)
 SLIP_BP = 2.0       # 滑り (片道bp)
 COOLDOWN_S = 60.0   # 決済後の再エントリー禁止秒数
 MAX_HOLD_S = 1800.0
@@ -57,6 +83,10 @@ class Variant:
     explore_max_price: float = 3000.0
     respect_watchlist: bool = False  # その時刻に実機が監視していた銘柄だけ売買する
     fill_timeout_sec: float = 0.0    # ①指値の待ち時間。>0 なら刺さらなければ見送り
+    live_sizing: bool = False        # 実機と同じ建玉サイズ計算を使う (100株固定をやめる)
+    equity_jpy: float = 2_000_000
+    max_position_value: float = 1_500_000
+    regime_mult: float = 1.0         # 地合いによるサイズ倍率 (実機ログから取る)
 
 
 @dataclass
@@ -114,12 +144,15 @@ def _get_scorer():
 
 def run_variant(v: Variant, per_code: dict[str, list[dict]],
                 day: str | None = None, timeline=None) -> dict:
+    global _HOLD_SECS
+    _HOLD_SECS = []
     trades: list[float] = []
     tags: list[str] = []
     for code, rows in per_code.items():
         st = CodeState()
         pos = None
         pos_tag = "main"
+        pos_qty = UNIT
         cooldown_until = 0.0
         streak_side, streak_n = None, 0
         for i, r in enumerate(rows):
@@ -179,9 +212,11 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]],
                 if exit_reason:
                     cost = px * (r.get("spread_bps", 5) / 2 + SLIP_BP) / 10000
                     fill = px - cost if side == "buy" else px + cost
-                    pnl = (fill - epx) * UNIT if side == "buy" else (epx - fill) * UNIT
+                    q = pos_qty
+                    pnl = (fill - epx) * q if side == "buy" else (epx - fill) * q
                     trades.append(pnl)
                     tags.append(pos_tag)
+                    _HOLD_SECS.append(t - et)
                     pos = None
                     cd = COOLDOWN_S
                     if pnl < 0 and v.loss_cooldown_sec > 0:
@@ -291,25 +326,36 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]],
                 rng5 = (max(win_prices) - min(win_prices)) / px * 100
                 stop_pct = min(max(0.7 * rng5, 0.4), 1.5)
                 tgt_pct = stop_pct * 2
+            if v.live_sizing:
+                # 探索モードは実機も100株固定。本命だけ資金とリスクから計算する
+                qty = UNIT if tag == "explore" else _live_qty(v, side, px, imb, br)
+                if qty <= 0:
+                    continue  # 1単元に満たない = 実機も見送っている (高すぎる株など)
+            else:
+                qty = UNIT
             pos = (side, epx, t,
                    epx * (1 - sign * stop_pct / 100),
                    epx * (1 + sign * tgt_pct / 100),
                    epx)
             pos_tag = tag
+            pos_qty = qty
 
         if pos is not None:  # 引けで強制決済
             side, epx, et, _, _, _ = pos
             px = rows[-1]["last_price"]
-            pnl = (px - epx) * UNIT if side == "buy" else (epx - px) * UNIT
+            pnl = (px - epx) * pos_qty if side == "buy" else (epx - px) * pos_qty
             trades.append(pnl)
             tags.append(pos_tag)
 
     wins = [x for x in trades if x > 0]
+    hold = _HOLD_SECS
     n_exp = sum(1 for g in tags if g == "explore")
     return {
         "explore_trades": n_exp,
         "explore_pnl": sum(p for p, g in zip(trades, tags) if g == "explore"),
         "main_pnl": sum(p for p, g in zip(trades, tags) if g != "explore"),
+        "hold_avg": sum(hold)/len(hold) if hold else 0.0,
+        "pnl_list": list(trades),
         "trades": len(trades),
         "win_rate": len(wins) / len(trades) if trades else 0.0,
         "total": sum(trades),

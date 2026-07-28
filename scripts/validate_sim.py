@@ -30,6 +30,7 @@ LIVE_FAITHFUL = dict(
     min_range_pct=0.3, loss_cooldown_sec=0,
     explore=True, explore_imbalance=0.35, explore_surge=1.2, explore_max_price=3000.0,
     respect_watchlist=True,
+    live_sizing=True, regime_mult=0.30,   # 実機ログ上、7/9〜7/28は全日 x0.30
     # fill_timeout_sec=15.0 は不採用。「待ち時間内に価格が指値に届いたら約定」という
     # モデルは、買い指値が下落時にしか刺さらない = 不利な入り方だけを選ぶ偏りを生み、
     # 相関が +0.11 -> -0.22 に悪化した。実際の指値は板の順番待ちで、価格が下がらなくても
@@ -41,6 +42,8 @@ SCORE_LOG = """
 2026-07-28  -0.12  出発点 (探索モードなし・記録専用銘柄まで売買・監視外も売買)
 2026-07-28  +0.11  探索モード追加 + その時刻の監視リストに限定
 2026-07-28  -0.22  上記 + 指値約定モデル → 悪化したので不採用
+2026-07-28  +0.27  探索+監視リスト+実機と同じ建玉サイズ計算 (高すぎる株の見送りを再現)
+2026-07-28  +0.29  上記 + 監視ログが無い日を採点から除外 (13日で採点)
 """
 
 
@@ -78,6 +81,12 @@ def main() -> None:
         return
 
     timeline = load_watch_timeline()
+    # 監視リストの履歴が無い日 (engine.log 以前) はシミュが構造的に何も売買できない。
+    # 採点対象から外さないと、実力とは無関係に相関が下がる。
+    skipped = [d for d in days if not timeline.all_codes(f"{d[:4]}-{d[4:6]}-{d[6:]}")]
+    days = [d for d in days if d not in skipped]
+    if skipped:
+        print(f"(監視ログが無いため採点から除外: {', '.join(skipped)})")
     v = Variant("実機忠実", **LIVE_FAITHFUL)
 
     print(f"{'日付':<10}{'シミュ':>10}{'実機':>10}{'方向':>6}"
