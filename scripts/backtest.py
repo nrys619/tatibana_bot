@@ -50,6 +50,13 @@ class Variant:
     vol_stop: bool = False          # F: 損切り/トレール幅を直近5分の変動幅に連動させる
     ml_veto: float = 0.0            # ML: 方向確率がこの値未満なら見送り (0=無効)
     side_filter: str = ""           # G: "sell"=売りのみ / "buy"=買いのみ ("" = 両方)
+    # --- 実機再現 (Phase 0): 既定は全て無効 = 従来と同じ挙動 ---
+    explore: bool = False           # 探索モード: 本命が不成立なら緩い条件で試し玉
+    explore_imbalance: float = 0.35
+    explore_surge: float = 1.2
+    explore_max_price: float = 3000.0
+    respect_watchlist: bool = False  # その時刻に実機が監視していた銘柄だけ売買する
+    fill_timeout_sec: float = 0.0    # ①指値の待ち時間。>0 なら刺さらなければ見送り
 
 
 @dataclass
@@ -105,14 +112,17 @@ def _get_scorer():
     return _SCORER
 
 
-def run_variant(v: Variant, per_code: dict[str, list[dict]]) -> dict:
+def run_variant(v: Variant, per_code: dict[str, list[dict]],
+                day: str | None = None, timeline=None) -> dict:
     trades: list[float] = []
+    tags: list[str] = []
     for code, rows in per_code.items():
         st = CodeState()
         pos = None
+        pos_tag = "main"
         cooldown_until = 0.0
         streak_side, streak_n = None, 0
-        for r in rows:
+        for i, r in enumerate(rows):
             t = _epoch(r["ts"])
             px = r.get("last_price")
             if not px:
@@ -171,6 +181,7 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]]) -> dict:
                     fill = px - cost if side == "buy" else px + cost
                     pnl = (fill - epx) * UNIT if side == "buy" else (epx - fill) * UNIT
                     trades.append(pnl)
+                    tags.append(pos_tag)
                     pos = None
                     cd = COOLDOWN_S
                     if pnl < 0 and v.loss_cooldown_sec > 0:
@@ -181,6 +192,10 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]]) -> dict:
             # --- エントリー判定 ---
             if t < cooldown_until or len(st.hist) < 60:
                 continue
+            if v.respect_watchlist and timeline is not None and day is not None:
+                # 記録専用銘柄や、その時刻に監視から外れていた銘柄は実機は売買できない
+                if code not in timeline.codes_at(day, r["ts"][11:19]):
+                    continue
             if v.hours_filter:  # ③ 寄り後1時間 + 引け前 (14:30-15:00) のみ
                 hhmm = r["ts"][11:16]
                 if not ("09:00" <= hhmm < "10:00" or "14:30" <= hhmm < "15:00"):
@@ -196,13 +211,43 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]]) -> dict:
             if r.get("spread_bps", 99) > v.max_spread_bps:
                 continue
             imb, br, micro = r.get("imbalance", 0), r.get("buy_ratio", 0.5), r.get("microprice_dev", 0)
-            long_ok = imb >= v.imbalance and br >= v.tape_ratio and micro > 0
-            short_ok = imb <= -v.imbalance and br <= 1 - v.tape_ratio and micro < 0
-            if not long_ok and not short_ok:
+            avg_ticks = st.tick_sum / max(st.tick_n, 1)
+
+            def _gate(imb_th, surge, use_abs, use_brk):
+                """条件を満たせば "buy"/"sell"、だめなら None. 本命と探索で共用."""
+                if imb >= imb_th and br >= v.tape_ratio and micro > 0:
+                    s = "buy"
+                elif imb <= -imb_th and br <= 1 - v.tape_ratio and micro < 0:
+                    s = "sell"
+                else:
+                    return None
+                if v.side_filter and s != v.side_filter:
+                    return None
+                if v.trend_filter:
+                    if s == "buy" and not mom_up: return None
+                    if s == "sell" and not mom_dn: return None
+                if use_brk:
+                    if s == "buy" and px < st.session_high * 0.999: return None
+                    if s == "sell" and px > st.session_low * 1.001: return None
+                if v.volume_surge:
+                    if r.get("tick_count", 0.0) < surge * max(avg_ticks, 0.5): return None
+                if use_abs:
+                    if s == "buy" and not (ask_5m > 0 and r.get("ask_depth", 0) < v.absorption_ratio * ask_5m): return None
+                    if s == "sell" and not (bid_5m > 0 and r.get("bid_depth", 0) < v.absorption_ratio * bid_5m): return None
+                if v.resilience:
+                    lo, hi = min(win_prices), max(win_prices)
+                    if s == "buy" and not (lo < px * 0.9985 and px > lo * 1.001): return None
+                    if s == "sell" and not (hi > px * 1.0015 and px < hi * 0.999): return None
+                return s
+
+            side = _gate(v.imbalance, v.surge_ratio, v.absorption, v.breakout_only)
+            tag = "main"
+            if side is None and v.explore and px <= v.explore_max_price:
+                # 実機の探索モードは吸収・ブレイクを使わず、板不均衡と出来高だけ緩める
+                side = _gate(v.explore_imbalance, v.explore_surge, False, False)
+                tag = "explore"
+            if side is None:
                 streak_side, streak_n = None, 0
-                continue
-            side = "buy" if long_ok else "sell"
-            if v.side_filter and side != v.side_filter:
                 continue
             if v.ml_veto > 0:  # ML: 30秒後の方向予測でふるいにかける
                 prob = float(_get_scorer()(r))
@@ -217,24 +262,25 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]]) -> dict:
                 if streak_n < v.confirm_ticks:
                     continue
 
-            if v.trend_filter:
-                if side == "buy" and not mom_up: continue
-                if side == "sell" and not mom_dn: continue
-            if v.breakout_only:
-                if side == "buy" and px < st.session_high * 0.999: continue
-                if side == "sell" and px > st.session_low * 1.001: continue
-            if v.volume_surge:
-                avg_ticks = st.tick_sum / max(st.tick_n, 1)
-                if r.get("tick_count", 0.0) < v.surge_ratio * max(avg_ticks, 0.5): continue
-            if v.absorption:
-                if side == "buy" and not (ask_5m > 0 and r.get("ask_depth", 0) < v.absorption_ratio * ask_5m): continue
-                if side == "sell" and not (bid_5m > 0 and r.get("bid_depth", 0) < v.absorption_ratio * bid_5m): continue
-            if v.resilience:
-                lo, hi = min(win_prices), max(win_prices)
-                if side == "buy" and not (lo < px * 0.9985 and px > lo * 1.001): continue
-                if side == "sell" and not (hi > px * 1.0015 and px < hi * 0.999): continue
-
-            if v.maker_entry:
+            if v.maker_entry and v.fill_timeout_sec > 0:
+                # 実機は best bid/ask に指値を置き、待っても刺さらなければ取り消す。
+                # 待ち時間内に価格がその指値に届いたときだけ約定とみなす。
+                half = px * r.get("spread_bps", 5) / 2 / 10000
+                limit = px - half if side == "buy" else px + half
+                filled = False
+                for fr in rows[i + 1:]:
+                    if _epoch(fr["ts"]) - t > v.fill_timeout_sec:
+                        break
+                    fpx = fr.get("last_price")
+                    if not fpx:
+                        continue
+                    if (side == "buy" and fpx <= limit) or (side == "sell" and fpx >= limit):
+                        filled = True
+                        break
+                if not filled:
+                    continue  # 取り消し: 建玉は作らない
+                epx = limit
+            elif v.maker_entry:
                 epx = px  # ①指値: コストゼロで約定と仮定 (取り逃しは考慮しない楽観値)
             else:
                 cost = px * (r.get("spread_bps", 5) / 2 + SLIP_BP) / 10000
@@ -249,15 +295,21 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]]) -> dict:
                    epx * (1 - sign * stop_pct / 100),
                    epx * (1 + sign * tgt_pct / 100),
                    epx)
+            pos_tag = tag
 
         if pos is not None:  # 引けで強制決済
             side, epx, et, _, _, _ = pos
             px = rows[-1]["last_price"]
             pnl = (px - epx) * UNIT if side == "buy" else (epx - px) * UNIT
             trades.append(pnl)
+            tags.append(pos_tag)
 
     wins = [x for x in trades if x > 0]
+    n_exp = sum(1 for g in tags if g == "explore")
     return {
+        "explore_trades": n_exp,
+        "explore_pnl": sum(p for p, g in zip(trades, tags) if g == "explore"),
+        "main_pnl": sum(p for p, g in zip(trades, tags) if g != "explore"),
         "trades": len(trades),
         "win_rate": len(wins) / len(trades) if trades else 0.0,
         "total": sum(trades),
