@@ -32,6 +32,9 @@ LIVE_FAITHFUL = dict(
     respect_watchlist=True,
     live_sizing=True, regime_mult=0.30,  # 実機ログ上7/9〜7/28は全日x0.30
     anomaly=True, price_shock_bps=300.0,  # 実機configと同じ
+    max_total_exposure=6_000_000,         # 実機の建玉総額上限
+    gross_pnl=True,   # 実機DBは (決済価格-建値)x株数 しか記録しておらずコストを引いていない。
+                      # 採点を公平にするため合わせる (実機の真の損益はこれより悪い)
     # fill_timeout_sec=15.0 は不採用。「待ち時間内に価格が指値に届いたら約定」という
     # モデルは、買い指値が下落時にしか刺さらない = 不利な入り方だけを選ぶ偏りを生み、
     # 相関が +0.11 -> -0.22 に悪化した。実際の指値は板の順番待ちで、価格が下がらなくても

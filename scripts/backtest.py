@@ -102,10 +102,18 @@ class Variant:
     depth_drop_ratio: float = 0.3
     price_shock_bps: float = 300.0
     spread_blowout_bps: float = 50.0
+    max_total_exposure: float = 0.0  # 建玉総額の上限 (0=無制限)。実機は600万円
+    gross_pnl: bool = False          # 決済コストを引かない (実機DBの記録方式に合わせる時だけ)
 
 
 @dataclass
 class CodeState:
+    pos: tuple | None = None
+    pos_tag: str = "main"
+    pos_qty: int = UNIT
+    cooldown_until: float = 0.0
+    streak_side: str | None = None
+    streak_n: int = 0
     anom: deque = field(default_factory=lambda: deque())  # (t, total_depth, price)
     hist: deque = field(default_factory=lambda: deque())  # (t, price, ask_depth, bid_depth, ticks)
     session_high: float = 0.0
@@ -164,15 +172,17 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]],
     _HOLD_SECS = []
     trades: list[float] = []
     tags: list[str] = []
-    for code, rows in per_code.items():
-        st = CodeState()
-        pos = None
-        pos_tag = "main"
-        pos_qty = UNIT
-        cooldown_until = 0.0
-        streak_side, streak_n = None, 0
-        for i, r in enumerate(rows):
-            t = _epoch(r["ts"])
+    # 実機は1本のループで全銘柄を時刻順に処理する。建玉総額の上限を効かせるには
+    # 銘柄をまたいだ同時保有を把握する必要があるため、ここでも時刻順に混ぜて回す。
+    states: dict[str, CodeState] = {c: CodeState() for c in per_code}
+    stream = sorted(
+        ((_epoch(r["ts"]), code, i, r)
+         for code, rows in per_code.items() for i, r in enumerate(rows)),
+        key=lambda x: x[0],
+    )
+    for t, code, i, r in stream:
+            rows = per_code[code]
+            st = states[code]
             px = r.get("last_price")
             if not px:
                 continue
@@ -210,8 +220,8 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]],
             mom_dn = px < px_5m
 
             # --- 決済判定 ---
-            if pos is not None:
-                side, epx, et, stop, target, peak = pos
+            if st.pos is not None:
+                side, epx, et, stop, target, peak = st.pos
                 exit_reason = None
                 if v.scratch_sec > 0 and t - et >= v.scratch_sec:
                     move = (px - epx) / epx * 100 * (1 if side == "buy" else -1)
@@ -232,7 +242,7 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]],
                         if px >= stop: exit_reason = "stop"
                         elif px >= peak * (1 + trail / 100) and peak < epx:
                             exit_reason = "trail"
-                    pos = (side, epx, et, stop, target, peak)
+                    st.pos = (side, epx, et, stop, target, peak)
                 elif side == "buy":
                     if px <= stop: exit_reason = "stop"
                     elif px >= target: exit_reason = "target"
@@ -246,24 +256,24 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]],
                 if exit_reason is None and t - et >= MAX_HOLD_S:
                     exit_reason = "time"
                 if exit_reason:
-                    cost = px * (_spread_bps(r) / 2 + SLIP_BP) / 10000
+                    cost = 0.0 if v.gross_pnl else px * (_spread_bps(r) / 2 + SLIP_BP) / 10000
                     fill = px - cost if side == "buy" else px + cost
-                    q = pos_qty
+                    q = st.pos_qty
                     pnl = (fill - epx) * q if side == "buy" else (epx - fill) * q
                     trades.append(pnl)
-                    tags.append(pos_tag)
+                    tags.append(st.pos_tag)
                     _HOLD_SECS.append(t - et)
-                    pos = None
+                    st.pos = None
                     cd = COOLDOWN_S
                     if pnl < 0 and v.loss_cooldown_sec > 0:
                         cd = v.loss_cooldown_sec
-                    cooldown_until = t + cd
+                    st.cooldown_until = t + cd
                 continue
 
             # --- エントリー判定 ---
             if anom_hit:
                 continue
-            if t < cooldown_until or len(st.hist) < 60:
+            if t < st.cooldown_until or len(st.hist) < 60:
                 continue
             if v.respect_watchlist and timeline is not None and day is not None:
                 # 記録専用銘柄や、その時刻に監視から外れていた銘柄は実機は売買できない
@@ -320,7 +330,7 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]],
                 side = _gate(v.explore_imbalance, v.explore_surge, False, False)
                 tag = "explore"
             if side is None:
-                streak_side, streak_n = None, 0
+                st.streak_side, st.streak_n = None, 0
                 continue
             if v.ml_veto > 0:  # ML: 30秒後の方向予測でふるいにかける
                 prob = float(_get_scorer()(r))
@@ -328,11 +338,11 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]],
                 if side_prob < v.ml_veto:
                     continue
             if v.confirm_ticks > 0:
-                if side == streak_side:
-                    streak_n += 1
+                if side == st.streak_side:
+                    st.streak_n += 1
                 else:
-                    streak_side, streak_n = side, 1
-                if streak_n < v.confirm_ticks:
+                    st.streak_side, st.streak_n = side, 1
+                if st.streak_n < v.confirm_ticks:
                     continue
 
             if v.maker_entry and v.fill_timeout_sec > 0:
@@ -354,7 +364,11 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]],
                     continue  # 取り消し: 建玉は作らない
                 epx = limit
             elif v.maker_entry:
-                epx = px  # ①指値: コストゼロで約定と仮定 (取り逃しは考慮しない楽観値)
+                # ①指値: 実機は最良買い気配(売りなら最良売り気配)に置くので、
+                # 約定すれば現値より半スプレッド有利な価格で入る。
+                # (取り逃し=約21%は未モデル化。fill_timeout_sec の項を参照)
+                half = px * _spread_bps(r) / 2 / 10000
+                epx = px - half if side == "buy" else px + half
             else:
                 cost = px * (_spread_bps(r) / 2 + SLIP_BP) / 10000
                 epx = px + cost if side == "buy" else px - cost
@@ -371,19 +385,27 @@ def run_variant(v: Variant, per_code: dict[str, list[dict]],
                     continue  # 1単元に満たない = 実機も見送っている (高すぎる株など)
             else:
                 qty = UNIT
-            pos = (side, epx, t,
+            if v.max_total_exposure > 0:
+                # 実機は既存の建玉総額を見て、上限を超える新規は見送る
+                exposure = sum(s.pos[1] * s.pos_qty for s in states.values() if s.pos)
+                if exposure + qty * px > v.max_total_exposure:
+                    continue
+            st.pos = (side, epx, t,
                    epx * (1 - sign * stop_pct / 100),
                    epx * (1 + sign * tgt_pct / 100),
                    epx)
-            pos_tag = tag
-            pos_qty = qty
+            st.pos_tag = tag
+            st.pos_qty = qty
 
-        if pos is not None:  # 引けで強制決済
-            side, epx, et, _, _, _ = pos
-            px = rows[-1]["last_price"]
-            pnl = (px - epx) * pos_qty if side == "buy" else (epx - px) * pos_qty
+    for code, st in states.items():  # 引けで強制決済
+        if st.pos is not None:
+            side, epx, et, _, _, _ = st.pos
+            px = per_code[code][-1]["last_price"]
+            if not px:
+                continue
+            pnl = (px - epx) * st.pos_qty if side == "buy" else (epx - px) * st.pos_qty
             trades.append(pnl)
-            tags.append(pos_tag)
+            tags.append(st.pos_tag)
 
     wins = [x for x in trades if x > 0]
     hold = _HOLD_SECS
