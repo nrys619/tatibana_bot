@@ -202,6 +202,8 @@ def main() -> None:
             price_shock_bps=float(cfg.risk.get("price_shock_bps", 300)),
             record_codes=record_codes,
             adopted=adopted,
+            slippage_bps=float(cfg.get("costs", {}).get("slippage_bps", 2.0)),
+            commission_jpy=float(cfg.get("costs", {}).get("commission_jpy", 0.0)),
             explore_daily_loss_cap=float((exp_cfg.get("daily_loss_cap", 5000)
                                           if exp_cfg is not None else 5000)),
         )

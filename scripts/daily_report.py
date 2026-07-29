@@ -40,15 +40,17 @@ def build_analysis(day: str) -> dict:
     conn = sqlite3.connect(DB)
     q = conn.execute
 
-    n, total, wins = q("""SELECT COUNT(*), COALESCE(SUM(pnl),0),
-        SUM(CASE WHEN pnl>0 THEN 1 ELSE 0 END) FROM trades
+    n, total, wins, gross, cost = q("""SELECT COUNT(*),
+        COALESCE(SUM(COALESCE(pnl_net, pnl)),0),
+        SUM(CASE WHEN COALESCE(pnl_net, pnl)>0 THEN 1 ELSE 0 END),
+        COALESCE(SUM(pnl),0), COALESCE(SUM(cost),0) FROM trades
         WHERE entry_ts LIKE ?""", (day + "%",)).fetchone()
     if not n:
         conn.close()
         return {"分析結果": "取引なし。合図が出なかったか、地合いフィルタで見送った。"}
 
     def agg(cond: str) -> tuple[int, float]:
-        r = q(f"SELECT COUNT(*), COALESCE(SUM(pnl),0) FROM trades "
+        r = q(f"SELECT COUNT(*), COALESCE(SUM(COALESCE(pnl_net, pnl)),0) FROM trades "
               f"WHERE entry_ts LIKE ? AND {cond}", (day + "%",)).fetchone()
         return r[0], r[1]
 
@@ -57,14 +59,14 @@ def build_analysis(day: str) -> dict:
     en, ep = agg("entry_reason LIKE 'explore%'")
     mn, mp = agg("entry_reason NOT LIKE 'explore%'")
 
-    exits = list(q("""SELECT exit_reason, COUNT(*), COALESCE(SUM(pnl),0) FROM trades
+    exits = list(q("""SELECT exit_reason, COUNT(*), COALESCE(SUM(COALESCE(pnl_net, pnl)),0) FROM trades
         WHERE entry_ts LIKE ? GROUP BY 1 ORDER BY 3""", (day + "%",)))
-    best = list(q("""SELECT code, SUM(pnl) FROM trades WHERE entry_ts LIKE ?
-        GROUP BY code ORDER BY SUM(pnl) DESC LIMIT 2""", (day + "%",)))
-    worst = list(q("""SELECT code, SUM(pnl) FROM trades WHERE entry_ts LIKE ?
-        GROUP BY code ORDER BY SUM(pnl) LIMIT 2""", (day + "%",)))
-    cum = q("SELECT COALESCE(SUM(pnl),0) FROM trades WHERE substr(entry_ts,1,10) <= ?",
-            (day,)).fetchone()[0]
+    best = list(q("""SELECT code, SUM(COALESCE(pnl_net, pnl)) FROM trades WHERE entry_ts LIKE ?
+        GROUP BY code ORDER BY 2 DESC LIMIT 2""", (day + "%",)))
+    worst = list(q("""SELECT code, SUM(COALESCE(pnl_net, pnl)) FROM trades WHERE entry_ts LIKE ?
+        GROUP BY code ORDER BY 2 LIMIT 2""", (day + "%",)))
+    cum = q("""SELECT COALESCE(SUM(COALESCE(pnl_net, pnl)),0) FROM trades
+        WHERE substr(entry_ts,1,10) <= ?""", (day,)).fetchone()[0]
     open_n = q("SELECT COUNT(*) FROM trades WHERE entry_ts LIKE ? AND exit_ts IS NULL",
                (day + "%",)).fetchone()[0]
     conn.close()
@@ -101,7 +103,7 @@ def build_analysis(day: str) -> dict:
                      f"買い{bn}件{bp:+.0f}円 / 売り{sn}件{sp:+.0f}円、"
                      f"本命{mn}件{mp:+.0f}円 / 探索{en}件{ep:+.0f}円。"
                      f"決済内訳: {ex_txt}。通算{cum:+.0f}円。"
-                     f"※損益はスプレッド・手数料を含まない記録上の値"),
+                     f"(売買コスト{cost:,.0f}円を差し引いた実質値。コスト抜きなら{gross:+.0f}円)"),
         "良かった点": "、".join(good) or "特になし",
         "悪かった点": "、".join(bad) or "大きな損失なし",
         "気づき・課題": "。".join(note) or "特記事項なし",
@@ -148,11 +150,17 @@ def main() -> None:
         print(f"{day}: 記入済み ({marker})。再送するなら --force")
         return
 
+    # 数字から作る欄は毎回作り直し、Claudeが手で書いた欄だけ引き継ぐ。
+    # (両方を無条件に上書きすると、古い自動生成文が新しい計算を潰してしまう)
+    MANUAL_KEYS = ("改善点", "次に実装できそうな点", "実装した点", "バックテスト通算")
     path = ANALYSES_DIR / f"{day}.json"
+    analysis = build_analysis(day)
     if path.exists():
-        analysis = {**build_analysis(day), **json.loads(path.read_text())}
-    else:
-        analysis = build_analysis(day)
+        prev = json.loads(path.read_text())
+        for k in MANUAL_KEYS:
+            v = prev.get(k, "")
+            if v and not v.startswith("(自動生成"):
+                analysis[k] = v
     path.write_text(json.dumps(analysis, ensure_ascii=False, indent=1))
 
     res = subprocess.run(

@@ -46,6 +46,12 @@ disclosure:
   max_docs_per_run: 50
   min_impact_for_watchlist: 3
 
+# 売買コスト: 記録される損益からこれを引いた値が実質の損益 (pnl_net)
+# 2026-07-30まで実機の損益はコストを一切引いておらず、実際より良く見えていた
+costs:
+  slippage_bps: 2.0       # 成行決済の滑り (片道bp)
+  commission_jpy: 0       # 1取引あたりの手数料 (デモは0。実口座では実額を入れる)
+
 signals:
   imbalance_entry: 0.4      # 板の買い/売り不均衡の閾値
   # 有名デイトレーダー手法のフィルタ (バックテストで選抜、毎日再検証)

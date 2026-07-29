@@ -13,6 +13,8 @@ from datetime import datetime, time as dtime
 from tatibana_bot.api.client import MarketDataClient
 from tatibana_bot.data.store import SnapshotRecorder, TradeLog
 from tatibana_bot.engine.executor import Executor
+from math import isfinite
+
 from tatibana_bot.models import Board, Position, Side, WatchItem
 from tatibana_bot.risk.anomaly import AnomalyDetector
 from tatibana_bot.risk.limits import RiskLimits
@@ -64,6 +66,8 @@ class LiveEngine:
         price_shock_bps: float = 300.0,
         record_codes: list[str] | None = None,
         adopted: list | None = None,   # 起動時照合で引き取った建玉 (Position, trade_id)
+        slippage_bps: float = 2.0,     # 成行決済の滑り (片道)
+        commission_jpy: float = 0.0,   # 1取引あたりの手数料
     ):
         self._md = market_data
         self._executor = executor
@@ -99,6 +103,8 @@ class LiveEngine:
         self._record_codes = [c for c in (record_codes or []) if c not in self._watch]
         self._record_tapes: dict[str, TapeReader] = {c: TapeReader() for c in self._record_codes}
         self._anomaly = AnomalyDetector(price_shock_bps=price_shock_bps)
+        self._slippage_bps = slippage_bps
+        self._commission = commission_jpy
         self._positions: dict[str, tuple[Position, int]] = {}  # code -> (pos, trade_id)
         for _pos, _tid in (adopted or []):
             self._positions[_pos.code] = (_pos, _tid)
@@ -243,7 +249,8 @@ class LiveEngine:
                 reason = f"anomaly:{anomalies[0].kind}"
             if reason is not None:
                 pnl = self._executor.close_position(position, price, reason)
-                self._log.close_trade(trade_id, now, price, pnl, reason)
+                cost = self._exit_cost(position, price, board)
+                self._log.close_trade(trade_id, now, price, pnl, reason, cost=cost)
                 del self._positions[code]
                 if position.tag == "explore":
                     self._explore_pnl_today += pnl
@@ -330,6 +337,21 @@ class LiveEngine:
                              signal.reason, acted=True)
         self._positions[code] = (position, trade_id)
 
+    _MAX_COST_BPS = 50.0  # 板の片側が空だとスプレッドが無限大になる。ここで頭打ち
+
+    def _exit_cost(self, position: Position, price: float, board: Board | None) -> float:
+        """決済にかかるコスト。
+
+        エントリーは最良気配への指値なのでスプレッドを払わない (むしろ有利側で入る)。
+        決済は成行で反対側に当てるため、半スプレッド+滑り を払う。
+        """
+        spread_bps = 0.0
+        if board is not None:
+            sp = board_features(board).get("spread_bps", 0.0)
+            spread_bps = self._MAX_COST_BPS if not isfinite(sp) else min(sp, self._MAX_COST_BPS)
+        rate = (spread_bps / 2 + self._slippage_bps) / 10000
+        return abs(price) * position.quantity * rate + self._commission
+
     def _close_all(self, reason: str) -> None:
         if not self._positions:
             return
@@ -342,5 +364,6 @@ class LiveEngine:
             board = boards.get(code)
             price = (board.last_price or board.mid) if board else position.entry_price
             pnl = self._executor.close_position(position, price, reason)
-            self._log.close_trade(trade_id, now, price, pnl, reason)
+            cost = self._exit_cost(position, price, board)
+            self._log.close_trade(trade_id, now, price, pnl, reason, cost=cost)
             del self._positions[code]

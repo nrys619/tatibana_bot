@@ -46,6 +46,14 @@ class TradeLog:
         path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(path)
         self._conn.executescript(_SCHEMA)
+        # 2026-07-30: 損益にコストを算入するため列を追加。
+        # 既存の pnl は「コスト抜き」のまま残す (過去データとの比較を壊さないため)。
+        # 実質の損益は pnl - COALESCE(cost, 0) で求める。
+        for col, decl in [("cost", "REAL"), ("pnl_net", "REAL")]:
+            try:
+                self._conn.execute(f"ALTER TABLE trades ADD COLUMN {col} {decl}")
+            except sqlite3.OperationalError:
+                pass  # 既にある
         self._conn.commit()
 
     def open_trade(
@@ -72,11 +80,13 @@ class TradeLog:
         exit_price: float,
         pnl: float,
         reason: str,
+        cost: float = 0.0,
     ) -> None:
+        """pnl はコスト抜きの値。cost を引いた実質損益を pnl_net に入れる."""
         self._conn.execute(
-            "UPDATE trades SET exit_ts = ?, exit_price = ?, pnl = ?, exit_reason = ?"
-            " WHERE id = ?",
-            (ts.isoformat(), exit_price, pnl, reason, trade_id),
+            "UPDATE trades SET exit_ts = ?, exit_price = ?, pnl = ?, exit_reason = ?,"
+            " cost = ?, pnl_net = ? WHERE id = ?",
+            (ts.isoformat(), exit_price, pnl, reason, cost, pnl - cost, trade_id),
         )
         self._conn.commit()
 
