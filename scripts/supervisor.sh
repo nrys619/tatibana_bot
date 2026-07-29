@@ -11,9 +11,17 @@ set -u
 REPO="$HOME/Desktop/立花証券/tatibana_bot"
 VENV="$HOME/.venvs/tatibana_bot"
 LOG="$REPO/logs/supervisor.log"
+# Desktop は iCloud 同期下にあり、起動直後はまだアクセスできないことがある。
+# その間ログが書けず障害が見えなくなるため、同期外の控えにも必ず残す。
+FALLBACK_LOG="$HOME/.local/share/tatibana_bot/supervisor.log"
+mkdir -p "$(dirname "$FALLBACK_LOG")" 2>/dev/null
 UID_=$(id -u)
 
-log() { echo "$(date '+%F %T') $1" >> "$LOG"; }
+log() {
+    local line="$(date '+%F %T') $1"
+    echo "$line" >> "$FALLBACK_LOG" 2>/dev/null
+    echo "$line" >> "$LOG" 2>/dev/null
+}
 
 engine_alive() {
     launchctl print "gui/$UID_/com.tatibana.engine" 2>/dev/null | grep -q "state = running"
@@ -30,7 +38,13 @@ while true; do
         if ! engine_alive; then
             log "engine not running — cleanup & kickstart"
             chflags nohidden "$VENV"/lib/python*/site-packages/*.pth 2>/dev/null
-            cd "$REPO" || { log "repo missing!"; sleep 300; continue; }
+            # 起動直後は iCloud が Desktop を用意できていないことがある。
+            # 5分も待つと寄り付きを丸ごと逃すので、短い間隔で試し直す。
+            if ! cd "$REPO"; then
+                log "repo not reachable (iCloud未同期?) — 30秒後に再試行"
+                sleep 30
+                continue
+            fi
             "$VENV/bin/python" scripts/repay_leftovers.py >> "$LOG" 2>&1
             launchctl kickstart "gui/$UID_/com.tatibana.engine" >> "$LOG" 2>&1
             sleep 8
