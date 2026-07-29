@@ -63,6 +63,7 @@ class LiveEngine:
         explore_daily_loss_cap: float = 5000.0,
         price_shock_bps: float = 300.0,
         record_codes: list[str] | None = None,
+        adopted: list | None = None,   # 起動時照合で引き取った建玉 (Position, trade_id)
     ):
         self._md = market_data
         self._executor = executor
@@ -99,6 +100,13 @@ class LiveEngine:
         self._record_tapes: dict[str, TapeReader] = {c: TapeReader() for c in self._record_codes}
         self._anomaly = AnomalyDetector(price_shock_bps=price_shock_bps)
         self._positions: dict[str, tuple[Position, int]] = {}  # code -> (pos, trade_id)
+        for _pos, _tid in (adopted or []):
+            self._positions[_pos.code] = (_pos, _tid)
+            # 引き取った建玉の銘柄が監視リストに無いと板を取りに行かず、
+            # 決済されないまま放置されてしまう。必ず監視に入れる。
+            if _pos.code not in self._watch:
+                self._watch[_pos.code] = WatchItem(code=_pos.code, ml_score=0.0)
+                self._tapes[_pos.code] = TapeReader()
 
     # ------------------------------------------------------------------
 

@@ -18,6 +18,7 @@ from tatibana_bot.data.daily import load_universe
 from tatibana_bot.data.store import SnapshotRecorder, TradeLog
 from tatibana_bot.engine.engine import LiveEngine
 from tatibana_bot.engine.executor import Executor
+from tatibana_bot.engine.reconcile import reconcile_startup
 from tatibana_bot.risk.limits import LimitParams, RiskLimits
 from tatibana_bot.risk.regime import classify_regime
 from tatibana_bot.risk.sizing import SizingParams
@@ -150,6 +151,20 @@ def main() -> None:
     session = create_session(cfg)
 
     with session:
+        # 起動時照合: 前回落ちた等で宙に浮いた建玉があれば引き取り、
+        # 実口座に無い未決済は帳簿を正す (2026-07-17 と 07-28 に実際に事故った)
+        trade_log = TradeLog(Path(cfg.paths.data_dir) / "trades.sqlite3")
+        adopted = []
+        if mode == "live":
+            adopted = reconcile_startup(
+                OrderGateway(session), trade_log,
+                stop_pct=cfg.signals.stop_pct, target_pct=cfg.signals.target_pct,
+                max_hold_sec=cfg.signals.max_hold_sec,
+                trailing_pct=float(cfg.signals.get("trailing_pct", 0.0)))
+            if adopted:
+                logger.warning("宙に浮いた建玉を %d件 引き取った (エンジンが決済する)",
+                               len(adopted))
+
         executor = Executor(
             mode,
             OrderGateway(session) if mode == "live" else None,
@@ -171,7 +186,7 @@ def main() -> None:
                 daily_loss_limit=cfg.risk.daily_loss_limit,
                 max_consecutive_losses=cfg.risk.max_consecutive_losses,
             )),
-            trade_log=TradeLog(Path(cfg.paths.data_dir) / "trades.sqlite3"),
+            trade_log=trade_log,
             watchlist=watchlist,
             regime_multiplier=regime_mult,
             max_hold_sec=cfg.signals.max_hold_sec,
@@ -186,6 +201,7 @@ def main() -> None:
             explore_strategy=explore_strategy,
             price_shock_bps=float(cfg.risk.get("price_shock_bps", 300)),
             record_codes=record_codes,
+            adopted=adopted,
             explore_daily_loss_cap=float((exp_cfg.get("daily_loss_cap", 5000)
                                           if exp_cfg is not None else 5000)),
         )

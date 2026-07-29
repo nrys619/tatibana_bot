@@ -80,6 +80,14 @@ class TradeLog:
         )
         self._conn.commit()
 
+    def open_trades(self) -> list[dict]:
+        """まだ決済されていない取引 (エンジンが落ちた等で宙に浮いた建玉の候補)."""
+        cur = self._conn.execute(
+            "SELECT id, code, side, quantity, entry_ts, entry_price, entry_reason"
+            " FROM trades WHERE exit_ts IS NULL ORDER BY id")
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
     def today_realized_pnl(self, day: str) -> float:
         """day ("YYYY-MM-DD") に決済したトレードの確定損益合計."""
         cur = self._conn.execute(
