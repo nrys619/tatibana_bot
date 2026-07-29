@@ -1,6 +1,6 @@
 #!/bin/bash
 # tatibana_bot 見張り番 (launchd KeepAlive で常駐):
-#   - 平日の取引時間帯 (8:53-15:25) にエンジンが動いていなければ
+#   - 平日の取引時間帯 (8:53-15:25) にエンジンが動いていなければ (引け後は日次記入も)
 #     launchd のエンジンジョブ (com.tatibana.engine) を起動する
 #   - エンジンが落ちたら60秒以内に自動再起動 (起動前に建玉の後始末)
 #   - 引け後・夜間・週末は待機
@@ -58,5 +58,17 @@ while true; do
             fi
         fi
     fi
+    # 引け後の日次記入。launchdの時報はMacがスリープしていると鳴らないことがあるため、
+    # 常駐している見張り番からも実行する。data/analyses/.posted/ の印で二重記入を防ぐ。
+    if [ "$dow" -le 5 ] && [ "$hhmm" -ge 1540 ]; then
+        if cd "$REPO" 2>/dev/null; then
+            out=$("$VENV/bin/python" scripts/daily_report.py --catchup 5 2>&1)
+            case "$out" in
+                *すべて記入済み*) : ;;                       # 平常。ログを汚さない
+                *) log "日次記入: $out" ;;
+            esac
+        fi
+    fi
+
     sleep 60
 done

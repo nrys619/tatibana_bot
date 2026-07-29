@@ -116,7 +116,28 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", default=f"{date.today():%Y-%m-%d}")
     ap.add_argument("--force", action="store_true", help="記入済みでも再送する")
+    ap.add_argument("--catchup", type=int, metavar="N",
+                    help="直近N日のうち未記入の日をまとめて記入する")
     args = ap.parse_args()
+
+    if args.catchup:
+        # launchdの時報はMacがスリープしていると鳴らないことがある。
+        # 取りこぼした日を後から拾うための追いつき処理。
+        POSTED_DIR.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(DB)
+        recent = [r[0] for r in conn.execute(
+            "SELECT DISTINCT substr(entry_ts,1,10) FROM trades ORDER BY 1 DESC LIMIT ?",
+            (args.catchup,))]
+        conn.close()
+        missing = [d for d in sorted(recent) if not (POSTED_DIR / d).exists()]
+        if not missing:
+            print(f"追いつき: 直近{args.catchup}日はすべて記入済み")
+            return
+        print(f"追いつき: 未記入 {missing}")
+        for d in missing:
+            subprocess.run([sys.executable, __file__, "--date", d], check=False)
+        return
+
     day = args.date
 
     ANALYSES_DIR.mkdir(parents=True, exist_ok=True)
