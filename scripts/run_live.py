@@ -86,7 +86,6 @@ def main() -> None:
             absorption=cfg.signals.get("absorption", False),
             breakout_only=cfg.signals.get("breakout_only", False),
             min_range_pct=float(cfg.signals.get("min_range_pct", 0.0)),
-            allow_buy=allow_buy,
         ),
         ml_scorer=scorer,
     )
@@ -140,7 +139,6 @@ def main() -> None:
                 volume_surge=True,
                 surge_ratio=float(exp_cfg.get("surge_ratio", 1.2)),
                 min_range_pct=float(cfg.signals.get("min_range_pct", 0.0)),
-                allow_buy=allow_buy,
             ),
             ml_scorer=scorer,
         )
@@ -202,6 +200,7 @@ def main() -> None:
             price_shock_bps=float(cfg.risk.get("price_shock_bps", 300)),
             record_codes=record_codes,
             adopted=adopted,
+            allow_buy=allow_buy,
             slippage_bps=float(cfg.get("costs", {}).get("slippage_bps", 2.0)),
             commission_jpy=float(cfg.get("costs", {}).get("commission_jpy", 0.0)),
             explore_daily_loss_cap=float((exp_cfg.get("daily_loss_cap", 5000)

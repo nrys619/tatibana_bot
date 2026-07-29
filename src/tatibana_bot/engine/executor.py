@@ -38,6 +38,7 @@ class Executor:
         self._maker = maker_entry
         self._fill_timeout = fill_timeout_sec
         self._trailing_pct = trailing_pct
+        self.trailing_pct = trailing_pct  # 影の取引が実物と同じ決済ルールを使うため公開
 
     @property
     def mode(self) -> str:

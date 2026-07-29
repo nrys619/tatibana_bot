@@ -28,6 +28,22 @@ CREATE TABLE IF NOT EXISTS trades (
     pnl REAL,
     exit_reason TEXT
 );
+CREATE TABLE IF NOT EXISTS shadow_trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL,
+    side TEXT NOT NULL,
+    quantity INTEGER NOT NULL,
+    entry_ts TEXT NOT NULL,
+    entry_price REAL NOT NULL,
+    entry_reason TEXT,
+    blocked_by TEXT NOT NULL,
+    exit_ts TEXT,
+    exit_price REAL,
+    pnl REAL,
+    cost REAL,
+    pnl_net REAL,
+    exit_reason TEXT
+);
 CREATE TABLE IF NOT EXISTS signals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,
@@ -88,6 +104,24 @@ class TradeLog:
             " cost = ?, pnl_net = ? WHERE id = ?",
             (ts.isoformat(), exit_price, pnl, reason, cost, pnl - cost, trade_id),
         )
+        self._conn.commit()
+
+    def open_shadow(self, code: str, side: str, quantity: int, ts: datetime,
+                    entry_price: float, reason: str, blocked_by: str) -> int:
+        """見送った合図を「もし入っていたら」として記録する (実注文はしない)."""
+        cur = self._conn.execute(
+            "INSERT INTO shadow_trades (code, side, quantity, entry_ts, entry_price,"
+            " entry_reason, blocked_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (code, side, quantity, ts.isoformat(), entry_price, reason, blocked_by))
+        self._conn.commit()
+        return int(cur.lastrowid)
+
+    def close_shadow(self, shadow_id: int, ts: datetime, exit_price: float,
+                     pnl: float, reason: str, cost: float = 0.0) -> None:
+        self._conn.execute(
+            "UPDATE shadow_trades SET exit_ts = ?, exit_price = ?, pnl = ?,"
+            " exit_reason = ?, cost = ?, pnl_net = ? WHERE id = ?",
+            (ts.isoformat(), exit_price, pnl, reason, cost, pnl - cost, shadow_id))
         self._conn.commit()
 
     def open_trades(self) -> list[dict]:

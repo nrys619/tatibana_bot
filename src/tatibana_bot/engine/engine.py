@@ -18,7 +18,7 @@ from math import isfinite
 from tatibana_bot.models import Board, Position, Side, WatchItem
 from tatibana_bot.risk.anomaly import AnomalyDetector
 from tatibana_bot.risk.limits import RiskLimits
-from tatibana_bot.risk.sizing import SizingParams, position_size
+from tatibana_bot.risk.sizing import UNIT_SHARES, SizingParams, position_size
 from tatibana_bot.signals.orderbook import board_features
 from tatibana_bot.signals.strategy import MicroStrategy
 from tatibana_bot.signals.tape import TapeReader
@@ -66,6 +66,7 @@ class LiveEngine:
         price_shock_bps: float = 300.0,
         record_codes: list[str] | None = None,
         adopted: list | None = None,   # 起動時照合で引き取った建玉 (Position, trade_id)
+        allow_buy: bool = True,        # J: 下げ相場では買いを見送る (見送り分は影の取引に記録)
         slippage_bps: float = 2.0,     # 成行決済の滑り (片道)
         commission_jpy: float = 0.0,   # 1取引あたりの手数料
     ):
@@ -103,6 +104,8 @@ class LiveEngine:
         self._record_codes = [c for c in (record_codes or []) if c not in self._watch]
         self._record_tapes: dict[str, TapeReader] = {c: TapeReader() for c in self._record_codes}
         self._anomaly = AnomalyDetector(price_shock_bps=price_shock_bps)
+        self._allow_buy = allow_buy
+        self._shadow: dict[str, tuple[Position, int]] = {}  # 見送った買いの「もし入っていたら」
         self._slippage_bps = slippage_bps
         self._commission = commission_jpy
         self._positions: dict[str, tuple[Position, int]] = {}  # code -> (pos, trade_id)
@@ -240,6 +243,9 @@ class LiveEngine:
                 {**board_features(board), **tape_feats, "last_price": price},
             )
 
+        if price is not None:
+            self._tick_shadow(code, board, price, now)
+
         # --- 決済管理 ---
         held = self._positions.get(code)
         if held is not None and price is not None:
@@ -289,6 +295,14 @@ class LiveEngine:
         if signal is None:
             return
 
+        # J: 下げ相場では買いを見送る。判断が正しかったか後で測れるよう、
+        # 「もし入っていたら」を影の取引として記録する (実注文はしない)
+        if signal.side == Side.BUY and not self._allow_buy:
+            self._log.log_signal(now, code, signal.side.value, signal.confidence,
+                                 signal.reason + " | buy blocked (falling market)", acted=False)
+            self._open_shadow(code, signal, now)
+            return
+
         # ②のLLM解析がその銘柄に強い悪材料を出していたらロングしない (逆も同様)
         watch = self._watch[code]
         if watch.disclosure_sentiment == "bearish" and signal.side.value == "buy":
@@ -301,7 +315,6 @@ class LiveEngine:
             return
 
         if explore:
-            from tatibana_bot.risk.sizing import UNIT_SHARES
             quantity = UNIT_SHARES  # 試し玉は最小単位固定
         else:
             quantity = position_size(signal, self._sizing, self._regime_mult)
@@ -336,6 +349,36 @@ class LiveEngine:
         self._log.log_signal(now, code, signal.side.value, signal.confidence,
                              signal.reason, acted=True)
         self._positions[code] = (position, trade_id)
+
+    def _open_shadow(self, code: str, signal, now: datetime) -> None:
+        """見送った合図を影の建玉として持つ。実注文はしない."""
+        if code in self._shadow:
+            return
+        pos = Position(
+            code=code, side=signal.side, quantity=UNIT_SHARES,
+            entry_price=signal.entry_price, entry_ts=now,
+            stop_price=signal.stop_price, target_price=signal.target_price,
+            max_hold_sec=self._max_hold_sec, trailing_pct=self._executor.trailing_pct,
+            peak=signal.entry_price, tag="shadow",
+        )
+        sid = self._log.open_shadow(code, signal.side.value, UNIT_SHARES, now,
+                                    signal.entry_price, signal.reason,
+                                    blocked_by="falling_market")
+        self._shadow[code] = (pos, sid)
+
+    def _tick_shadow(self, code: str, board: Board, price: float, now: datetime) -> None:
+        """影の建玉を実物と同じ決済ルールで進める (成績の比較を公平にするため)."""
+        entry = self._shadow.get(code)
+        if entry is None:
+            return
+        pos, sid = entry
+        reason = Executor.should_exit(pos, price, now)
+        if reason is None:
+            return
+        pnl = pos.pnl(price)
+        self._log.close_shadow(sid, now, price, pnl, reason,
+                               cost=self._exit_cost(pos, price, board))
+        del self._shadow[code]
 
     _MAX_COST_BPS = 50.0  # 板の片側が空だとスプレッドが無限大になる。ここで頭打ち
 

@@ -66,16 +66,6 @@ def test_strategy_long_signal(make_board):
     assert 0.5 <= signal.confidence <= 0.9
 
 
-def test_strategy_skips_buy_when_buy_disabled(make_board):
-    """下げ相場で買いを止める設定 (allow_buy=False) では買い合図を出さない."""
-    feats = {"buy_ratio": 0.8, "tick_count": 20.0, "price_drift": 5.0}
-    board = _strong_long_board(make_board)
-    base = dict(imbalance_entry=0.3, tape_ratio_entry=0.6)
-    assert MicroStrategy(StrategyParams(**base)).evaluate(board, feats) is not None
-    blocked = MicroStrategy(StrategyParams(**base, allow_buy=False))
-    assert blocked.evaluate(board, feats) is None
-
-
 def test_strategy_rejects_wide_spread(make_board):
     strategy = MicroStrategy(StrategyParams(max_spread_bps=5.0))
     # スプレッド 10bp (999/1000) -> 5bp上限で見送り
