@@ -15,6 +15,13 @@ LOG="$REPO/logs/supervisor.log"
 # その間ログが書けず障害が見えなくなるため、同期外の控えにも必ず残す。
 FALLBACK_LOG="$HOME/.local/share/tatibana_bot/supervisor.log"
 mkdir -p "$(dirname "$FALLBACK_LOG")" 2>/dev/null
+
+# コマンド出力のリダイレクト先。**必ず書ける場所を使う。**
+# bash はコマンド実行前にリダイレクト先を開くため、開けないとコマンド自体が走らない。
+# 2026-07-30、$LOG (iCloud同期下のDesktop) が書けなくなり、
+# `launchctl kickstart >> "$LOG"` が発射されず寄り付きを43分逃した。
+OUT="$FALLBACK_LOG"
+if : >> "$LOG" 2>/dev/null; then OUT="$LOG"; fi
 UID_=$(id -u)
 
 log() {
@@ -45,15 +52,15 @@ while true; do
                 sleep 30
                 continue
             fi
-            "$VENV/bin/python" scripts/repay_leftovers.py >> "$LOG" 2>&1
-            launchctl kickstart "gui/$UID_/com.tatibana.engine" >> "$LOG" 2>&1
+            "$VENV/bin/python" scripts/repay_leftovers.py >> "$OUT" 2>&1
+            launchctl kickstart "gui/$UID_/com.tatibana.engine" >> "$OUT" 2>&1
             sleep 8
             if engine_alive; then
                 log "engine started via launchd"
                 osascript -e 'display notification "見張りを開始しました (デモ口座)" with title "🤖 tatibana_bot" sound name "Glass"' 2>/dev/null
             else
                 log "ENGINE START FAILED — engine.log末尾:"
-                tail -5 "$REPO/logs/engine.log" >> "$LOG" 2>/dev/null
+                tail -5 "$REPO/logs/engine.log" >> "$OUT" 2>/dev/null
                 osascript -e 'display notification "起動に失敗! Claudeに「ボット起動して」と伝えてください" with title "❌ tatibana_bot"' 2>/dev/null
             fi
         fi
