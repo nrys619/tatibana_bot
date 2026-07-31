@@ -34,10 +34,14 @@ logger = logging.getLogger("swing")
 COST_PCT = 0.05      # 往復コスト (実測 約128円/25万円)
 
 
-def load_panel() -> pd.DataFrame:
-    """全銘柄の特徴量と将来リターンを1枚の表にする (日付 x 銘柄)."""
+def load_panel(daily_dir: str = "data/daily", min_turnover: float = 0.0) -> pd.DataFrame:
+    """全銘柄の特徴量と将来リターンを1枚の表にする (日付 x 銘柄).
+
+    daily_dir に data/daily_all を渡すと、JPXの上場銘柄一覧から集めた
+    「後から選んだのではない」母集団で検証できる。
+    """
     rows = []
-    for f in sorted(glob.glob("data/daily/*.parquet")):
+    for f in sorted(glob.glob(f"{daily_dir}/*.parquet")):
         code = Path(f).stem
         d = pd.read_parquet(f).sort_index()
         if len(d) < 80:
@@ -49,7 +53,12 @@ def load_panel() -> pd.DataFrame:
         feats["open"] = d["open"].to_numpy(dtype=float)
         rows.append(feats)
     panel = pd.concat(rows, ignore_index=True)
-    return panel.dropna(subset=FEATURE_COLUMNS)
+    panel = panel.dropna(subset=FEATURE_COLUMNS)
+    if min_turnover > 0:
+        # 売買代金が細すぎる銘柄は、実際には注文が通らない/滑るので除外する。
+        # (全上場銘柄には1日数百万円しか動かない銘柄も多く含まれる)
+        panel = panel[panel["turnover_jpy"] >= min_turnover]
+    return panel
 
 
 def add_forward_returns(panel: pd.DataFrame, holds: list[int]) -> pd.DataFrame:
@@ -139,10 +148,14 @@ def main() -> None:
     ap.add_argument("--step-days", type=int, default=10, help="モデルを作り直す間隔")
     ap.add_argument("--ex-ante-universe", action="store_true",
                     help="最初から存在した銘柄だけに絞る (後から選ばれた偏りを排除)")
+    ap.add_argument("--daily-dir", default="data/daily",
+                    help="data/daily_all を指定するとJPX全銘柄で検証する")
+    ap.add_argument("--min-turnover", type=float, default=0.0,
+                    help="1日の売買代金の下限 (円)。細い銘柄は実際には売買できない")
     args = ap.parse_args()
 
-    logger.info("日足を読み込み中...")
-    panel = add_forward_returns(load_panel(), args.holds)
+    logger.info("日足を読み込み中... (%s)", args.daily_dir)
+    panel = add_forward_returns(load_panel(args.daily_dir, args.min_turnover), args.holds)
     if args.ex_ante_universe:
         # この銘柄群は「後で松井のランキングに載ったから収集された」ため、
         # 動いた銘柄が選ばれている偏りがある。データの最初から存在する銘柄だけに
