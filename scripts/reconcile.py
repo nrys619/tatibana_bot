@@ -10,6 +10,7 @@ exit code: 0=正常 / 2=要調査 (ズレ検出)
 
 from __future__ import annotations
 
+import gzip
 import json
 import sqlite3
 import sys
@@ -22,6 +23,8 @@ def expected_signals(day: str, since_hhmm: str = "09:00") -> list[tuple[str, str
     """探索モード基準で「出るはずだった合図」の時刻と銘柄を数える."""
     path = Path(f"data/snapshots/{day}.jsonl")
     if not path.exists():
+        path = Path(f"data/snapshots/{day}.jsonl.gz")
+    if not path.exists():
         return []
     hists: dict[str, deque] = defaultdict(deque)
     ticksum: dict[str, float] = defaultdict(float)
@@ -29,7 +32,8 @@ def expected_signals(day: str, since_hhmm: str = "09:00") -> list[tuple[str, str
     hits: list[tuple[str, str]] = []
     last_hit: dict[str, float] = {}
 
-    with open(path) as f:
+    opener = gzip.open if path.suffix == ".gz" else open
+    with opener(path, "rt") as f:
         for line in f:
             r = json.loads(line)
             code, px = r["code"], r.get("last_price")

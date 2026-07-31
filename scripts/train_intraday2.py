@@ -24,6 +24,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(mes
 logger = logging.getLogger("train2")
 
 SNAP_DIR = Path("data/snapshots")
+
+
+def _snap_path(day: str) -> Path:
+    """圧縮済みならそちらを返す (ディスク節約で古い日は gzip されている)."""
+    p = SNAP_DIR / f"{day}.jsonl"
+    return p if p.exists() else SNAP_DIR / f"{day}.jsonl.gz"
 OUT_DIR = Path("models")
 
 
@@ -36,14 +42,14 @@ def main() -> None:
     ap.add_argument("--valid-days", type=int, default=6, help="検証に回す末尾の日数")
     args = ap.parse_args()
 
-    days = sorted(p.stem for p in SNAP_DIR.glob("*.jsonl"))
+    days = sorted({p.name.split(".")[0] for p in SNAP_DIR.glob("*.jsonl*")})
     if len(days) <= args.valid_days:
         raise SystemExit(f"日数が足りない ({len(days)}日)")
     logger.info("対象 %d日: %s 〜 %s", len(days), days[0], days[-1])
 
     tables = []
     for d in days:
-        df = pd.read_json(SNAP_DIR / f"{d}.jsonl", lines=True)
+        df = pd.read_json(_snap_path(d), lines=True)
         t = build_day(df, args.target_pct, args.stop_pct, args.window, args.stride)
         if not t.empty:
             t["day"] = d

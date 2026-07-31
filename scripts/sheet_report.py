@@ -64,11 +64,10 @@ def build_payload(day: str, analysis: dict) -> dict:
         " AND substr(exit_ts,1,10) <= ?", (day,)).fetchone()[0]
     conn.close()
 
-    snap = Path(f"data/snapshots/{day.replace('-', '')}.jsonl")
-    snap_total = sum(
-        sum(1 for _ in open(p)) for p in Path("data/snapshots").glob("*.jsonl")
-        if p.stem <= day.replace("-", "")
-    ) if snap.parent.exists() else 0
+    snap = Path("data/snapshots")
+    # 行数の実数え上げは重い (圧縮後は特に)。ファイルサイズの合計で代替する。
+    snap_total = int(sum(p.stat().st_size for p in snap.glob("*.jsonl*"))
+                     / 1000) if snap.exists() else 0
 
     summary = [day, len(trades), win, lose, round(total), round(cumulative),
                round(honmei), round(explore)]

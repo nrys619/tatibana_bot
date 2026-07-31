@@ -11,6 +11,7 @@ usage:
 
 from __future__ import annotations
 
+import gzip
 import json
 import sys
 from collections import deque
@@ -134,9 +135,21 @@ def _max_price() -> float:
 MAX_PRICE = _max_price()
 
 
+def _snap_path(day_or_path):
+    """圧縮済みならそちらを返す (.jsonl / .jsonl.gz を透過的に扱う)."""
+    p = Path(day_or_path) if not isinstance(day_or_path, Path) else day_or_path
+    if p.suffix != ".gz" and not p.exists():
+        gz = Path(str(p) + ".gz")
+        if gz.exists():
+            return gz
+    return p
+
+
 def _load_day(path: Path) -> dict[str, list[dict]]:
     per_code: dict[str, list[dict]] = {}
-    with open(path) as f:
+    path = _snap_path(path)
+    opener = gzip.open if path.suffix == ".gz" else open
+    with opener(path, "rt") as f:
         for line in f:
             r = json.loads(line)
             per_code.setdefault(r["code"], []).append(r)
@@ -524,7 +537,7 @@ VARIANTS = [
 
 def main() -> None:
     snap_dir = Path("data/snapshots")
-    days = sys.argv[1:] or sorted(p.stem for p in snap_dir.glob("*.jsonl"))
+    days = sys.argv[1:] or sorted({p.name.split(".")[0] for p in snap_dir.glob("*.jsonl*")})
     day_data = {d: _load_day(snap_dir / f"{d}.jsonl") for d in days}
     print(f"対象日: {days}")
     header = f"{'バリアント':<24}" + "".join(f"{d[-4:]}損益 " for d in days) + "合計損益  取引数 勝率"

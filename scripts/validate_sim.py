@@ -80,7 +80,7 @@ def _corr(xs: list[float], ys: list[float]) -> float:
 
 def main() -> None:
     live = live_daily()
-    days = sys.argv[1:] or sorted(d for d in (p.stem for p in SNAP_DIR.glob("*.jsonl"))
+    days = sys.argv[1:] or sorted(d for d in {p.name.split(".")[0] for p in SNAP_DIR.glob("*.jsonl*")}
                                   if d in live)
     if not days:
         print("比較できる日がありません (実機の取引記録とスナップショットの両方が要る)")

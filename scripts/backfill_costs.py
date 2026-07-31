@@ -28,11 +28,15 @@ MAX_COST_BPS = 50.0   # 板の片側が空だとスプレッドが無限大で�
 
 def load_spreads(day: str) -> dict[str, tuple[list[str], list[float]]]:
     """その日のスナップショットから code -> (時刻の並び, スプレッド) を作る."""
-    path = SNAP_DIR / f"{day.replace('-', '')}.jsonl"
+    stem = day.replace("-", "")
+    path = SNAP_DIR / f"{stem}.jsonl"
+    gz = SNAP_DIR / f"{stem}.jsonl.gz"
     out: dict[str, tuple[list[str], list[float]]] = {}
-    if not path.exists():
+    if not path.exists() and not gz.exists():
         return out
-    with path.open() as f:
+    import gzip
+    opener = (lambda: gzip.open(gz, "rt")) if not path.exists() else path.open
+    with opener() as f:
         for line in f:
             try:
                 r = json.loads(line)

@@ -187,13 +187,34 @@ class SnapshotRecorder:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     def load_day(self, day: str) -> pd.DataFrame:
-        """day ("YYYYMMDD") のスナップショットを DataFrame で返す (なければ空)."""
+        """day ("YYYYMMDD") のスナップショットを DataFrame で返す (なければ空).
+
+        ディスク節約のため古い日は gzip 圧縮される。両方を透過的に読む。
+        """
         path = self._dir / f"{day}.jsonl"
-        if not path.exists():
+        if path.exists():
+            text = path.read_text()
+        elif (gz := self._dir / f"{day}.jsonl.gz").exists():
+            import gzip
+            with gzip.open(gz, "rt") as f:
+                text = f.read()
+        else:
             return pd.DataFrame()
-        rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+        rows = [json.loads(line) for line in text.splitlines() if line.strip()]
         if not rows:
             return pd.DataFrame()
         df = pd.DataFrame(rows)
         df["ts"] = pd.to_datetime(df["ts"])
         return df
+
+
+def open_snapshot(day_or_path):
+    """スナップショットを開く (.jsonl / .jsonl.gz の両方に対応)."""
+    import gzip
+    from pathlib import Path
+    p = Path(day_or_path)
+    if p.suffix == ".gz" or not p.exists():
+        gz = p if p.suffix == ".gz" else p.with_suffix(".jsonl.gz")
+        if gz.exists():
+            return gzip.open(gz, "rt")
+    return p.open()
