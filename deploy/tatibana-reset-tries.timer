@@ -1,0 +1,9 @@
+[Unit]
+Description=毎朝8:50に見張り番のカウンタを戻す
+
+[Timer]
+OnCalendar=Mon..Fri 08:50
+Persistent=false
+
+[Install]
+WantedBy=timers.target

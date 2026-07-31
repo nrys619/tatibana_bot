@@ -1,0 +1,7 @@
+[Unit]
+Description=エンジンの見張り番 (止まっていたら起動し直す)
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/home/tatibana/tatibana_bot/scripts/watchdog.sh

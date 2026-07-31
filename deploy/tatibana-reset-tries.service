@@ -1,0 +1,7 @@
+[Unit]
+Description=見張り番の試行回数を毎朝リセットする
+
+[Service]
+Type=oneshot
+User=tatibana
+ExecStart=/bin/rm -f /home/tatibana/tatibana_bot/logs/.watchdog_tries

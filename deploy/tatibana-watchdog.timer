@@ -1,0 +1,11 @@
+[Unit]
+Description=場中5分おきにエンジンの生存を確認する
+
+[Timer]
+# 平日の5分おき。実際に動くかどうか(8:53-15:20の判定)はスクリプト側で見る。
+# systemd の書式では 08:53..15:20/5:00 は解釈できない (実機で確認済み)
+OnCalendar=Mon..Fri *:00/5
+Persistent=false
+
+[Install]
+WantedBy=timers.target
