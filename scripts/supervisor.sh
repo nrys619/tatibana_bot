@@ -8,7 +8,7 @@
 # 実体は ~/.local/bin/tatibana_supervisor.sh。変更したら cp で同期すること。
 
 set -u
-REPO="$HOME/Desktop/立花証券/tatibana_bot"
+REPO="$HOME/tatibana_bot"
 VENV="$HOME/.venvs/tatibana_bot"
 LOG="$REPO/logs/supervisor.log"
 # Desktop は iCloud 同期下にあり、起動直後はまだアクセスできないことがある。
