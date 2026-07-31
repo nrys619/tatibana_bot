@@ -1,0 +1,20 @@
+[Unit]
+Description=tatibana_bot 場中エンジン (板を1秒ごとに見て売買する)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tatibana
+WorkingDirectory=/home/tatibana/tatibana_bot
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/tatibana/tatibana_bot/.venv/bin/python scripts/run_live.py
+# 異常終了したときだけ再起動する。引け(15:30)の正常終了では再起動しない。
+# Macのlaunchdでは「落ちても誰も気づかない」事故が何度も起きたので、ここは必須。
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/home/tatibana/tatibana_bot/logs/engine.log
+StandardError=append:/home/tatibana/tatibana_bot/logs/engine.log
+
+[Install]
+WantedBy=multi-user.target

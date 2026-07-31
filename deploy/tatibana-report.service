@@ -1,0 +1,13 @@
+[Unit]
+Description=日次成績のスプレッドシート記入
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=tatibana
+WorkingDirectory=/home/tatibana/tatibana_bot
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/tatibana/tatibana_bot/.venv/bin/python scripts/daily_report.py --catchup 5
+StandardOutput=append:/home/tatibana/tatibana_bot/logs/launchd_report.log
+StandardError=append:/home/tatibana/tatibana_bot/logs/launchd_report.log

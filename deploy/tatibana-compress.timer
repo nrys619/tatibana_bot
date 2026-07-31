@@ -1,0 +1,10 @@
+[Unit]
+Description=板録画の圧縮 (ディスク保護)
+
+[Timer]
+OnCalendar=*-*-* 23:30
+# サーバーが止まっていて時刻を逃した場合、起動後に実行する
+Persistent=true
+
+[Install]
+WantedBy=timers.target

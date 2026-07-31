@@ -1,0 +1,10 @@
+[Unit]
+Description=夜の銘柄選定とモデル学習
+
+[Timer]
+OnCalendar=*-*-* 21:03
+# サーバーが止まっていて時刻を逃した場合、起動後に実行する
+Persistent=true
+
+[Install]
+WantedBy=timers.target
