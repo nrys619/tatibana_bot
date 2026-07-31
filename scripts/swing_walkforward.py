@@ -53,12 +53,7 @@ def load_panel(daily_dir: str = "data/daily", min_turnover: float = 0.0) -> pd.D
         feats["open"] = d["open"].to_numpy(dtype=float)
         rows.append(feats)
     panel = pd.concat(rows, ignore_index=True)
-    panel = panel.dropna(subset=FEATURE_COLUMNS)
-    if min_turnover > 0:
-        # 売買代金が細すぎる銘柄は、実際には注文が通らない/滑るので除外する。
-        # (全上場銘柄には1日数百万円しか動かない銘柄も多く含まれる)
-        panel = panel[panel["turnover_jpy"] >= min_turnover]
-    return panel
+    return panel.dropna(subset=FEATURE_COLUMNS)
 
 
 def add_forward_returns(panel: pd.DataFrame, holds: list[int]) -> pd.DataFrame:
@@ -155,7 +150,16 @@ def main() -> None:
     args = ap.parse_args()
 
     logger.info("日足を読み込み中... (%s)", args.daily_dir)
-    panel = add_forward_returns(load_panel(args.daily_dir, args.min_turnover), args.holds)
+    # **将来リターンは「間引く前」の連続した日付で計算する。**
+    # 先に売買代金でフィルタすると shift(-1) の「翌日」が
+    # 「次に基準を超えた日」= 数週間先になり、1日保有で年率1031%という
+    # 嘘の数字が出た (2026-08-01に実際にやらかした)
+    panel = add_forward_returns(load_panel(args.daily_dir), args.holds)
+    if args.min_turnover > 0:
+        before = len(panel)
+        panel = panel[panel["turnover_jpy"] >= args.min_turnover]
+        logger.info("売買代金 %.0f億円以上に限定: %d行 -> %d行",
+                    args.min_turnover / 1e8, before, len(panel))
     if args.ex_ante_universe:
         # この銘柄群は「後で松井のランキングに載ったから収集された」ため、
         # 動いた銘柄が選ばれている偏りがある。データの最初から存在する銘柄だけに
