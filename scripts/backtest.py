@@ -463,6 +463,19 @@ VARIANTS = [
     _live("K2: ストップ0.2%", **CUR, stop_pct=0.2),
     _live("K3: ストップ0.3%+トレール0.25", **CUR, stop_pct=0.3, trailing_pct=0.25),
     _live("K4: 売りのみ+ストップ0.25", **CUR, side_filter="sell", stop_pct=0.25),
+    # --- (B) 出口だけを変えて比較する (2026-08-01) ---
+    # 実機ではストップ決済が16戦全敗-20,420円、トレール決済は黒字だった。
+    # 入口を一切変えず、出口の違いだけで収支がどう動くかを見る。
+    _live("B1: ストップ無し(トレールのみ)", **CUR, stop_pct=99.0),
+    _live("B2: トレール0.2%(早逃げ)", **CUR, trailing_pct=0.2),
+    _live("B3: トレール0.5%(粘る)", **CUR, trailing_pct=0.5),
+    _live("B4: トレール0.8%(かなり粘る)", **CUR, trailing_pct=0.8),
+    _live("B5: ストップ無し+トレール0.2", **CUR, stop_pct=99.0, trailing_pct=0.2),
+    _live("B6: ストップ無し+トレール0.5", **CUR, stop_pct=99.0, trailing_pct=0.5),
+    _live("B7: 3分で見切り", **CUR, scratch_sec=180),
+    _live("B8: 10分で見切り", **CUR, scratch_sec=600),
+    _live("B9: 利確0.5%固定(トレール無し)", **CUR, trailing_pct=0.0, target_pct=0.5),
+    _live("B10: 利確1.5%固定(トレール無し)", **CUR, trailing_pct=0.0, target_pct=1.5),
     _live("F: 変動連動ストップ", **CUR, vol_stop=True),
     _live("★+吸収復活", **CUR, absorption=True),
     _live("★+吸収+トレール.4", **CUR, absorption=True, trailing_pct=0.4),
