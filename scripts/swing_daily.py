@@ -169,8 +169,8 @@ def main() -> None:
                 VALUES (?,?,?,?,?,?,?)""",
                 (c.code, c.name, today, qty, c.z20, plan.date().isoformat(),
                  "live" if args.live else "paper"))
-            logger.info("  候補: %s %s  %.1fσ  %d株 (約%,.0f円)",
-                        c.code, c.name, c.z20, qty, c.close * qty)
+            logger.info("  候補: %s %s  %.1fσ  %d株 (約%s円)",
+                        c.code, c.name, c.z20, qty, f"{c.close * qty:,.0f}")
         conn.commit()
 
         # 翌営業日の始値が判明している未約定分を埋める

@@ -1,0 +1,9 @@
+[Unit]
+Description=毎晩21:20にスイング戦略をまわす (夜間バッチの後)
+
+[Timer]
+OnCalendar=Mon..Fri 21:20
+Persistent=true
+
+[Install]
+WantedBy=timers.target
