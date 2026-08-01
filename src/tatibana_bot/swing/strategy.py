@@ -22,16 +22,25 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SwingParams:
-    """バックテストで検証した条件そのもの。安易に変えないこと."""
+    """バックテストで検証した条件そのもの。安易に変えないこと.
 
-    z_entry: float = -2.0          # 20日平均から何σ売られたら買うか
+    地合いで買いと売りを切り替える (2026-08-01の検証):
+      下げ基調 -> 売られすぎ(-2σ以下)を**買う**   平均+1.35% 累積+36.0% 下落-13.4%
+      上げ基調 -> 買われすぎ(+2.5σ以上)を**売る** 平均+0.70% 累積+118.8% 下落-17.3%
+    どちらも「行き過ぎは戻る」という同じ性質の裏表。
+    地合いを限定しないと売り側は全滅する (前回それで没にした) ので、
+    **上げ基調のときだけ売る**という条件は外さないこと。
+    """
+
+    z_entry: float = -2.0          # 下げ基調: 何σ売られたら買うか
+    z_entry_short: float = 2.5     # 上げ基調: 何σ買われたら売るか
     hold_days: int = 5             # 何営業日持つか
     min_turnover: float = 1e9      # 売買代金の下限 (実際に注文が通る水準)
     market_ma: int = 25            # 地合い判定に使う指数の移動平均
     max_positions: int = 10        # 同時に持つ銘柄数の上限
     position_value: float = 200_000  # 1銘柄あたりの金額
-    # 地合い: 前日の指数が25日平均より「下」のときだけ買う (押し目買い)
-    require_down_market: bool = True
+    require_down_market: bool = True  # 買いは下げ基調のときだけ
+    enable_short: bool = True         # 上げ基調のときは売りに回る
 
 
 @dataclass
@@ -41,6 +50,7 @@ class SwingCandidate:
     close: float
     turnover: float
     name: str = ""
+    side: str = "buy"      # "buy" = 売られすぎを買う / "sell" = 買われすぎを売る
 
 
 def market_is_down(index_close: pd.Series, params: SwingParams) -> bool | None:
@@ -59,11 +69,13 @@ def market_is_down(index_close: pd.Series, params: SwingParams) -> bool | None:
 
 
 def find_candidates(bars: dict[str, pd.DataFrame], params: SwingParams,
-                    names: dict[str, str] | None = None) -> list[SwingCandidate]:
-    """条件を満たす銘柄を、売られすぎている順に返す.
+                    names: dict[str, str] | None = None,
+                    side: str = "buy") -> list[SwingCandidate]:
+    """条件を満たす銘柄を、行き過ぎている順に返す.
 
     bars は code -> 日足 (open/high/low/close/volume、index は日付)。
-    **最新の行が「昨日の終値」である前提**。買うのは翌営業日の寄り付き。
+    **最新の行が「昨日の終値」である前提**。売買するのは翌営業日の寄り付き。
+    side="buy" なら売られすぎ、"sell" なら買われすぎを探す。
     """
     names = names or {}
     out: list[SwingCandidate] = []
@@ -76,11 +88,15 @@ def find_candidates(bars: dict[str, pd.DataFrame], params: SwingParams,
             continue
         z = float((c.iloc[-1] - ma20.iloc[-1]) / sd20.iloc[-1])
         turnover = float(c.iloc[-1] * d["volume"].iloc[-1])
-        if z <= params.z_entry and turnover >= params.min_turnover:
+        if turnover < params.min_turnover:
+            continue
+        hit = z <= params.z_entry if side == "buy" else z >= params.z_entry_short
+        if hit:
             out.append(SwingCandidate(code=code, z20=z, close=float(c.iloc[-1]),
-                                      turnover=turnover, name=names.get(code, "")))
-    # より売られている順 (z が小さい順)
-    out.sort(key=lambda x: x.z20)
+                                      turnover=turnover, name=names.get(code, ""),
+                                      side=side))
+    # より行き過ぎている順 (買いはzが小さい順、売りはzが大きい順)
+    out.sort(key=lambda x: x.z20, reverse=(side == "sell"))
     return out[:params.max_positions]
 
 

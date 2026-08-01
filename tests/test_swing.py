@@ -96,3 +96,57 @@ def test_params_match_backtest():
     assert p.hold_days == 5         # 5営業日保有
     assert p.min_turnover == 1e9    # 売買代金10億円以上
     assert p.require_down_market is True   # 下げ基調のときだけ
+
+
+# --- 空売り側 (2026-08-01追加) ---
+
+def test_finds_overbought_for_short():
+    """上げ基調のときは、買われすぎ(+2.5σ以上)を探す."""
+    spiked = [1000.0] * 24 + [995.0, 1003.0, 996.0, 1002.0, 1100.0]
+    bars = {"7203": _bars(spiked)}
+    got = find_candidates(bars, SwingParams(), {"7203": "トヨタ"}, side="sell")
+    assert [c.code for c in got] == ["7203"]
+    assert got[0].z20 >= 2.5
+    assert got[0].side == "sell"
+    # 同じ銘柄を買い側で探しても引っかからない
+    assert find_candidates(bars, SwingParams(), side="buy") == []
+
+
+def test_short_sorted_by_most_overbought():
+    """売りは、より買われている銘柄が先に来る (買いとは逆順)."""
+    base = [1000.0] * 24 + [995.0, 1003.0, 996.0, 1002.0]
+    bars = {"A": _bars(base + [1100.0]), "B": _bars(base + [1200.0])}
+    got = find_candidates(bars, SwingParams(max_positions=2), side="sell")
+    assert [c.code for c in got] == ["B", "A"]     # Bの方が買われている
+
+
+def test_short_pnl_sign_is_inverted():
+    """**売りは値下がりが利益**。ここを間違えると全部の符号が逆になる."""
+    import sqlite3
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    import swing_daily
+
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(swing_daily._SCHEMA)
+    # 1000円で売建 -> 900円まで下がった = 100円 x 100株 = +10,000円の利益
+    conn.execute("""INSERT INTO swing_trades
+        (code, name, side, signal_date, entry_date, entry_price, quantity,
+         z20, planned_exit_date) VALUES
+        ('7203','トヨタ','sell','2026-08-01','2026-08-03',1000.0,100,2.6,'2026-08-08')""")
+    conn.commit()
+    idx = pd.date_range("2026-08-03", periods=8, freq="D")
+    d = pd.DataFrame({"open": 900.0, "high": 910.0, "low": 890.0,
+                      "close": 900.0, "volume": 1e6}, index=idx)
+    swing_daily.settle(conn, {"7203": d})
+    pnl, net = conn.execute("SELECT pnl, pnl_net FROM swing_trades").fetchone()
+    assert pnl == pytest.approx(10_000.0)   # 下がって利益 (買いなら-10,000円)
+    assert net < pnl                        # コストが引かれている
+
+
+def test_short_params_match_backtest():
+    """空売り側も検証条件から変わっていないこと."""
+    p = SwingParams()
+    assert p.z_entry_short == 2.5      # +2.5σ以上を売る
+    assert p.enable_short is True      # 上げ基調では売りに回る

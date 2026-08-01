@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS swing_trades (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     code TEXT NOT NULL,
     name TEXT,
+    side TEXT NOT NULL DEFAULT 'buy',  -- buy=売られすぎを買う / sell=買われすぎを売る
     signal_date TEXT NOT NULL,      -- 条件を満たした日 (終値ベース)
     entry_date TEXT,                -- 実際に買った日 (翌営業日の寄り)
     entry_price REAL,
@@ -91,10 +92,10 @@ def names() -> dict[str, str]:
 def settle(conn: sqlite3.Connection, bars: dict[str, pd.DataFrame]) -> int:
     """保有期間を過ぎた玉を、その日の始値で決済したことにする."""
     n = 0
-    for row in conn.execute("""SELECT id, code, entry_price, quantity, planned_exit_date
-                               FROM swing_trades WHERE exit_date IS NULL
+    for row in conn.execute("""SELECT id, code, entry_price, quantity, planned_exit_date,
+                               side FROM swing_trades WHERE exit_date IS NULL
                                AND entry_date IS NOT NULL""").fetchall():
-        tid, code, ep, qty, plan = row
+        tid, code, ep, qty, plan, side = row
         d = bars.get(code)
         if d is None:
             continue
@@ -103,7 +104,9 @@ def settle(conn: sqlite3.Connection, bars: dict[str, pd.DataFrame]) -> int:
             continue                       # まだその日が来ていない
         px = float(future["open"].iloc[0])
         exit_date = future.index[0].date().isoformat()
-        pnl = (px - ep) * qty
+        # **売りは値下がりが利益**。ここを間違えると全部の符号が逆になる
+        sign = 1 if side == "buy" else -1
+        pnl = (px - ep) * qty * sign
         cost = (ep + px) * qty * COST_PCT / 100 / 2
         conn.execute("""UPDATE swing_trades SET exit_date=?, exit_price=?, pnl=?,
                         cost=?, pnl_net=? WHERE id=?""",
@@ -143,15 +146,22 @@ def main() -> None:
         if down is None:
             note = "地合いを判定できない (データ不足)"
             cands = []
-        elif p.require_down_market and not down:
-            note = "上げ基調なので今日は買わない (この戦略は押し目買い)"
-            cands = []
         elif room <= 0:
             note = f"すでに上限{p.max_positions}銘柄を保有中"
             cands = []
+        elif down:
+            # 下げ基調 -> 売られすぎを買う (押し目買い)
+            cands = [c for c in find_candidates(bars, p, nm, side="buy")
+                     if c.code not in held][:room]
+            note = f"下げ基調 -> 売られすぎを買う。候補{len(cands)}銘柄"
+        elif p.enable_short:
+            # 上げ基調 -> 買われすぎを売る (2026-08-01の検証で追加)
+            cands = [c for c in find_candidates(bars, p, nm, side="sell")
+                     if c.code not in held][:room]
+            note = f"上げ基調 -> 買われすぎを売る。候補{len(cands)}銘柄"
         else:
-            cands = [c for c in find_candidates(bars, p, nm) if c.code not in held][:room]
-            note = f"下げ基調。候補{len(cands)}銘柄"
+            note = "上げ基調だが空売りは無効"
+            cands = []
 
         conn.execute("INSERT OR REPLACE INTO swing_days VALUES (?,?,?,?)",
                      (today, int(bool(down)) if down is not None else None,
@@ -165,11 +175,12 @@ def main() -> None:
             # 翌営業日の寄り付きで買う想定。実際の始値が分かるまで entry は空
             plan = (pd.Timestamp(today) + pd.tseries.offsets.BDay(p.hold_days + 1))
             conn.execute("""INSERT INTO swing_trades
-                (code, name, signal_date, quantity, z20, planned_exit_date, mode)
-                VALUES (?,?,?,?,?,?,?)""",
-                (c.code, c.name, today, qty, c.z20, plan.date().isoformat(),
+                (code, name, side, signal_date, quantity, z20, planned_exit_date, mode)
+                VALUES (?,?,?,?,?,?,?,?)""",
+                (c.code, c.name, c.side, today, qty, c.z20, plan.date().isoformat(),
                  "live" if args.live else "paper"))
-            logger.info("  候補: %s %s  %.1fσ  %d株 (約%s円)",
+            logger.info("  候補: %s %s %s  %.1fσ  %d株 (約%s円)",
+                        "買" if c.side == "buy" else "売",
                         c.code, c.name, c.z20, qty, f"{c.close * qty:,.0f}")
         conn.commit()
 
@@ -194,20 +205,21 @@ def main() -> None:
         WHERE exit_date IS NOT NULL""").fetchone()
     print()
     print("=" * 58)
-    print("  スイング戦略 (A3: 下げ基調で売られすぎた大型株を5日保有)")
+    print("  スイング戦略 (下げ基調=売られすぎを買う / 上げ基調=買われすぎを売る)")
     print("=" * 58)
     if n:
         print(f"  決済済み {n}件  実質 {net:+,.0f}円  勝率 {wins/n*100:.0f}%")
     else:
         print("  決済済みの取引はまだありません")
-    held = list(conn.execute("""SELECT code, name, entry_date, entry_price, quantity,
+    held = list(conn.execute("""SELECT code, name, side, entry_date, entry_price, quantity,
         z20, planned_exit_date FROM swing_trades WHERE exit_date IS NULL
         ORDER BY signal_date"""))
     if held:
         print(f"\n  保有中 {len(held)}件:")
-        for code, name, ed, ep, q, z, plan in held:
-            state = f"{ed} @{ep:,.0f}円" if ed else "翌営業日の寄りで買う予定"
-            print(f"    {code} {name[:14]:14} {z:+.1f}σ {q}株  {state}  → {plan}に決済")
+        for code, name, side, ed, ep, q, z, plan in held:
+            mark = "買" if side == "buy" else "売"
+            state = f"{ed} @{ep:,.0f}円" if ed else "翌営業日の寄りで執行予定"
+            print(f"    {mark} {code} {name[:14]:14} {z:+.1f}σ {q}株  {state}  → {plan}に決済")
     print("\n  ※paperモード: 実際には1円も動いていません")
     conn.close()
 
