@@ -151,6 +151,25 @@ def main() -> None:
     except sqlite3.OperationalError:
         pass
 
+    # --- 設定変更の判定 (Claudeが忘れても目に入るように) ---
+    try:
+        import subprocess as sp
+        r = sp.run(["/home/tatibana/tatibana_bot/.venv/bin/python",
+                    "scripts/evaluate_change.py", "--json"],
+                   capture_output=True, text=True, timeout=30)
+        for ch in json.loads(r.stdout):
+            if ch["verdict"] in ("戻す", "要判断"):
+                print(f"\n⚠️ 設定変更の判定: 【{ch['verdict']}】{ch['what']}")
+                print(f"   {ch['reason']}")
+                if ch["verdict"] == "戻す":
+                    print(f"   戻し方: {ch['revert']}")
+            elif ch["verdict"] == "続行":
+                print(f"\n✅ 設定変更は効いています: {ch['what']}")
+            elif ch["days"]:
+                print(f"\n⏳ 検証中: {ch['what']} ({ch['reason']})")
+    except Exception:
+        pass
+
     # --- ディスク ---
     dfree = subprocess.run(["bash", "-c", "df -h / | awk 'NR==2{print $4\" 空き (\"$5\" 使用)\"}'"],
                            capture_output=True, text=True).stdout.strip()
