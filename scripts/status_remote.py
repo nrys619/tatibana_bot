@@ -165,8 +165,9 @@ def main() -> None:
                     print(f"   戻し方: {ch['revert']}")
             elif ch["verdict"] == "続行":
                 print(f"\n✅ 設定変更は効いています: {ch['what']}")
-            elif ch["days"]:
-                print(f"\n⏳ 検証中: {ch['what']} ({ch['reason']})")
+            else:
+                print(f"\n⏳ 検証中: {ch['what']}")
+                print(f"   {ch['reason']}")
     except Exception:
         pass
 
